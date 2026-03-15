@@ -1,0 +1,5 @@
+*_user_data_dir/
+data/
+__pycache__/
+*.pyc
+.env
