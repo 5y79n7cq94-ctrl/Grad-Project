@@ -17,7 +17,7 @@
 ### 1. Clone repo
 
 ```bash
-git clone https://github.com/你的帳號/macau-analytics.git
+git clone https://github.com/FHLam727/Grad-Project.git
 ```
 
 ### 2. 將核心檔案複製入 MediaCrawler 根目錄
