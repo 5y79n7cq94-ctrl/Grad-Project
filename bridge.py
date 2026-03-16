@@ -15,6 +15,29 @@ _crawling_lock = threading.Lock()
 
 backfill_event_dates()
 app = FastAPI()
+
+# ── Custom CORS middleware：處理本地 HTML file 嘅 null origin ──────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+
+class NullOriginCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        origin = request.headers.get("origin", "")
+        if request.method == "OPTIONS":
+            response = StarletteResponse(status_code=200)
+            response.headers["Access-Control-Allow-Origin"] = origin or "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Max-Age"] = "3600"
+            return response
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = origin or "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+app.add_middleware(NullOriginCORSMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*", "null"],
@@ -25,6 +48,16 @@ app.add_middleware(
 )
 
 client = OpenAI(api_key="sk-06452010eeff43f59e36f4d86d4d5076", base_url="https://api.deepseek.com")
+
+# ── 繁簡轉換（共用 trad_simp 模組） ──────────────────────────────────────────
+try:
+    from trad_simp import expand_variants as _expand_variants
+except ImportError:
+    def _expand_variants(kw): return [kw]
+
+def _kw_variants_for_filter(keyword):
+    """返回 keyword 繁簡所有變體，用於 Python 後過濾相關性判斷"""
+    return _expand_variants(keyword)
 
 # ── 運營商關鍵字對照 ──────────────────────────────────────
 OP_KEYWORDS = {
@@ -135,14 +168,31 @@ CAT_FOCUS = {
 def classify_post(p):
     """
     根據 CAT_RULES 判斷帖文類別。
-    規則已設計成無歧義：sport 只含真正體育詞，食品/酒類比賽由 food 規則捕獲，
-    無需排除詞補救。
+    ✏️ CHANGED: 返回所有 match 嘅 (cat, sub) 組合，唔再只返回第一個。
+    呼叫方用 classify_post_all() 取 list，或 classify_post() 取 first（向下兼容）。
     """
     text = (str(p.get('title', '')) + ' ' + str(p.get('description', ''))).upper()
     for cat, sub, kws in CAT_RULES:
         if any(k.upper() in text for k in kws):
             return cat, sub
     return "experience", None
+
+
+def classify_post_all(p):
+    """
+    ✏️ NEW: 返回帖文所有 matching (cat, sub) 組合。
+    用於一帖含多種活動（如 concert + food）時唔漏掉任何 category。
+    """
+    text = (str(p.get('title', '')) + ' ' + str(p.get('description', ''))).upper()
+    results = []
+    seen = set()
+    for cat, sub, kws in CAT_RULES:
+        if any(k.upper() in text for k in kws):
+            key = (cat, sub)
+            if key not in seen:
+                seen.add(key)
+                results.append(key)
+    return results if results else [("experience", None)]
 
 def make_description(p):
     desc = (p.get('description', '') or '').strip()
@@ -166,6 +216,116 @@ def make_description(p):
     clean = re.sub(r'#[^\s#\[]+(\[话题\])?', '', desc).strip()
     clean = re.sub(r'\s+', ' ', clean)
     return clean[:50].strip() or "暫無描述"
+
+def _segs_have_overlap(segs: list[str]) -> bool:
+    """
+    檢查日期段 list 裡係咪有任何兩段互相重疊或包含。
+    重疊定義：一段嘅 start <= 另一段嘅 end，且另一段嘅 start <= 此段 end。
+    """
+    import datetime as _dt
+    parsed = []
+    for seg in segs:
+        parts = seg.split("~")
+        try:
+            s = _dt.date.fromisoformat(parts[0].strip())
+            e = _dt.date.fromisoformat(parts[-1].strip())
+            parsed.append((s, e))
+        except Exception:
+            return False  # parse 唔到就唔介入
+    for i in range(len(parsed)):
+        for j in range(i + 1, len(parsed)):
+            s1, e1 = parsed[i]
+            s2, e2 = parsed[j]
+            if s1 <= e2 and s2 <= e1:  # 有重疊（包含 = 完全重疊）
+                return True
+    return False
+
+
+def _resolve_overlapping_dates(date_str: str, post_text: str, activity_name: str) -> str:
+    """
+    當多段日期存在重疊/包含關係時，問 DeepSeek 判斷：
+    - 係「同一活動被重複描述」→ 返回主日期段（單段）
+    - 係「多場獨立場次」→ 返回原多段（全保留，前綴標記各段含義）
+    - 係「不同性質日期（如預訂期+入住期）」→ 返回各段加上語意標籤
+
+    若只有一段或冇重疊，直接返回原字串，唔問 DeepSeek。
+    """
+    if not date_str or date_str in ("N/A", "null", "None", ""):
+        return date_str or "N/A"
+
+    segs = [s.strip() for s in date_str.split(",") if s.strip()]
+    if len(segs) <= 1:
+        return date_str  # 單段，唔需要判斷
+
+    if not _segs_have_overlap(segs):
+        return date_str  # 段段不重疊，係多場活動，全保留
+
+    # ── 有重疊：問 DeepSeek ──────────────────────────────────
+    segs_display = "\n".join(f"  段{i+1}: {s}" for i, s in enumerate(segs))
+    snippet = (post_text or "")[:400]
+    prompt = f"""以下係從社交媒體帖文中抽取到的活動日期段落，請判斷這些日期段落的關係。
+
+活動名稱：{activity_name}
+帖文片段：
+{snippet}
+
+抽取到的日期段落：
+{segs_display}
+
+請判斷以上日期段落屬於哪種情況，並返回 JSON：
+
+情況A：重複描述同一活動（例如帖文中同一活動日期被提及兩次，一段包含另一段）
+→ 返回 {{"type": "duplicate", "primary": "主日期段（最能代表活動的那段）"}}
+
+情況B：同一活動的多個獨立場次（例如演唱會兩場、活動每個週末舉辦）
+→ 返回 {{"type": "multi_session", "segments": ["段1", "段2", ...]}}
+
+情況C：不同性質的日期（例如預訂期與入住期、報名期與活動期）
+→ 返回 {{"type": "multi_type", "segments": [{{"label": "標籤", "date": "日期段"}}, ...]}}
+
+只返回 JSON，唔需要解釋。日期段格式保持 YYYY-MM-DD~YYYY-MM-DD。"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+        result = json.loads(raw)
+
+        dtype = result.get("type", "")
+
+        if dtype == "duplicate":
+            primary = (result.get("primary") or "").strip()
+            if primary:
+                print(f"📅 DeepSeek: '{activity_name}' 重複描述 → 主日期: {primary}")
+                return primary
+
+        elif dtype == "multi_session":
+            resolved_segs = [s.strip() for s in (result.get("segments") or []) if s.strip()]
+            if resolved_segs:
+                joined = ",".join(resolved_segs)
+                print(f"📅 DeepSeek: '{activity_name}' 多場次 → {joined}")
+                return joined
+
+        elif dtype == "multi_type":
+            labeled = result.get("segments") or []
+            if labeled:
+                parts = [f"{item['label']} {item['date']}" for item in labeled
+                         if item.get("label") and item.get("date")]
+                if parts:
+                    joined = " | ".join(parts)
+                    print(f"📅 DeepSeek: '{activity_name}' 多類型日期 → {joined}")
+                    return joined
+
+    except Exception as e:
+        print(f"⚠️ _resolve_overlapping_dates 出錯 ({activity_name}): {e}")
+
+    # fallback：原樣返回
+    return date_str
+
 
 def dates_overlap(db_date_str, user_start, user_end):
     """檢查event_date字串係咪與查詢範圍重疊"""
@@ -194,10 +354,10 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
     # 2. DB 查詢（db_manager 已處理 category keyword 過濾）
     print("🔎 正在從資料庫檢索數據...")
     if target_cats != [""]:
-        dfs = [query_db_by_filters(keyword, target_ops, cat, max_pub_age_days=180) for cat in target_cats]  # ✏️ CHANGED
+        dfs = [query_db_by_filters(keyword, target_ops, cat, from_date=from_date) for cat in target_cats]
         df  = pd.concat(dfs).drop_duplicates(subset=['id']).reset_index(drop=True) if dfs else pd.DataFrame()
     else:
-        df = query_db_by_filters(keyword, target_ops, "", max_pub_age_days=180)  # ✏️ CHANGED
+        df = query_db_by_filters(keyword, target_ops, "", from_date=from_date)
 
     # 3. 爬蟲觸發
     all_ops_to_crawl = set()
@@ -243,9 +403,10 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                 return dates_overlap(str(row['event_date']) if row['event_date'] is not None else '', user_start, user_end)
             # ✏️ CHANGED: 社媒：用帖文發佈時間過濾，只保留近期帖（或有日期重疊嘅帖）
             # 舊邏輯係 return True（全部過），會帶入 2016-2023 年嘅舊帖
-            ed = str(row.get('event_date') or '')
+            # ✏️ FIX: 用 row['event_date'] 直接取值，避免 pandas .get() 截斷含逗號嘅多段日期
+            raw_ed = row['event_date'] if 'event_date' in row.index else None
+            ed = '' if raw_ed is None or (isinstance(raw_ed, float) and pd.isna(raw_ed)) else str(raw_ed).strip()
             if ed and ed not in ('nan', 'None', 'NaN', ''):
-                # 有 event_date：做精確重疊判斷
                 return dates_overlap(ed, user_start, user_end)
             # 冇 event_date：睇帖文發佈時間，只接受近 180 日內發佈
             try:
@@ -254,6 +415,7 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                 if pub_str:
                     pub_dt = pd.to_datetime(str(pub_str)[:10])
                     cutoff = user_start - pd.Timedelta(days=180)
+                    print(f"   → no event_date, pub_dt={str(pub_dt)[:10]}, cutoff={str(cutoff)[:10]}, keep={pub_dt >= cutoff}")
                     return pub_dt >= cutoff
             except:
                 pass
@@ -328,17 +490,25 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
         raw_social.sort(key=social_sort_key)
 
         social_classified = []
+        seen_post_ids = set()
+        has_keyword = bool(keyword and keyword.strip())
         for p in raw_social[:80]:
-            cat, sub = classify_post(p)
-            if target_cats != [""]:
-                wanted = any(
-                    (tc in ent_subtypes and cat == "entertainment" and sub == tc) or
-                    (tc not in ent_subtypes and cat == tc)
-                    for tc in target_cats
-                )
-                if not wanted:
-                    continue
-            social_classified.append({"post": p, "category": cat, "sub_type": sub})
+            # ✏️ CHANGED: 有 keyword 時用 multi-category（一帖可入多組讓後過濾保留相關活動）
+            # 無 keyword 時用單一最佳 category，避免月度總結帖的所有活動都入錯組出現噪音
+            if has_keyword:
+                all_cats = classify_post_all(p)
+            else:
+                all_cats = [classify_post(p)]
+            for cat, sub in all_cats:
+                if target_cats != [""]:
+                    wanted = any(
+                        (tc in ent_subtypes and cat == "entertainment" and sub == tc) or
+                        (tc not in ent_subtypes and cat == tc)
+                        for tc in target_cats
+                    )
+                    if not wanted:
+                        continue
+                social_classified.append({"post": p, "category": cat, "sub_type": sub})
 
         classified = gov_classified + social_classified
         if not classified:
@@ -355,145 +525,228 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
             loc = ""
             m   = re.search(r'地點[｜|]([^\s票（(]+)', p.get("description", "") or "")
             if m: loc = m.group(1).strip()
+            try:
+                from trad_simp import to_trad as _to_trad
+                _name = _to_trad(p.get("title", "").strip())
+                _desc = _to_trad(make_description(p))
+                _loc  = _to_trad(loc)
+            except Exception:
+                _name = p.get("title", "").strip()
+                _desc = make_description(p)
+                _loc  = loc
             activities.append({
-                "name":        p.get("title", "").strip(),
-                "description": make_description(p),
+                "name":        _name,
+                "description": _desc,
                 "date":        str(p.get("event_date") or "N/A").replace("nan", "N/A"),
-                "location":    loc,
+                "location":    _loc,
                 "category":    c["category"],
                 "sub_type":    c["sub_type"],
                 "source":      "government",
             })
 
-        # 社媒：分組送 DeepSeek 識別獨立活動
+        # 社媒：每個獨立帖文只送 DeepSeek 一次（唔論 match 幾多個 category）
+        # DeepSeek 自己識別帖文入面每個活動屬於咩 category
         if social_posts:
-            social_by_cat = defaultdict(list)
+            # 去重：同一 post id 只保留一次，但記錄佢 match 到哪些 categories
+            post_cats = defaultdict(set)  # post_id -> set of (cat, sub)
+            post_obj  = {}                # post_id -> post dict
             for c in social_posts:
-                social_by_cat[(c["category"], c["sub_type"])].append(c["post"])
+                pid = c["post"].get("id") or id(c["post"])
+                post_cats[pid].add((c["category"], c["sub_type"]))
+                post_obj[pid] = c["post"]
 
-            for (cat, sub), posts_group in social_by_cat.items():
-                snippets = []
-                # 優先取有日期且在查詢範圍內的帖文，再補無日期的，最後才是範圍外的
-                def post_priority(p):
-                    ed = str(p.get("event_date") or "")
-                    if ed and ed not in ("nan", "None", "NaN", ""):
-                        try:
-                            parts = ed.split(",")[0].strip().split("~")
-                            ev_s = pd.to_datetime(parts[0].strip())
-                            ev_e = pd.to_datetime(parts[-1].strip())
-                            if from_date and to_date:
-                                if ev_s <= pd.to_datetime(to_date) and ev_e >= pd.to_datetime(from_date):
-                                    return 0
-                                return 2
-                        except:
-                            pass
-                    return 1
-                sorted_group = sorted(posts_group, key=post_priority)
-                for p in sorted_group[:20]:
-                    title = (p.get("title") or "").strip()
-                    desc  = (p.get("description") or "").strip()
-                    if len(desc) < 30 and p.get("raw_json"):
-                        try:
-                            raw  = json.loads(p["raw_json"])
-                            desc = (raw.get("desc") or raw.get("content") or raw.get("shortDesc") or desc).strip()
-                        except:
-                            pass
-                    # 抽取帖文發佈時間
-                    post_date = ""
-                    if p.get("raw_json"):
-                        try:
-                            raw = json.loads(p["raw_json"])
-                            dt = raw.get("create_date_time") or raw.get("time") or ""
-                            if dt:
-                                post_date = f"（帖文發佈：{str(dt)[:10]}）"
-                        except:
-                            pass
-                    if title or desc:
-                        snippets.append(f"【帖文{len(snippets)+1}】{post_date}標題: {title}\n內容: {desc[:200] or '(空)'}")
+            # 按優先級排序（有日期且在範圍內的排前）
+            def post_priority(pid):
+                p  = post_obj[pid]
+                ed = str(p.get("event_date") or "")
+                if ed and ed not in ("nan", "None", "NaN", ""):
+                    try:
+                        parts = ed.split(",")[0].strip().split("~")
+                        ev_s  = pd.to_datetime(parts[0].strip())
+                        ev_e  = pd.to_datetime(parts[-1].strip())
+                        if from_date and to_date:
+                            if ev_s <= pd.to_datetime(to_date) and ev_e >= pd.to_datetime(from_date):
+                                return 0
+                            return 2
+                    except:
+                        pass
+                return 1
+            sorted_pids = sorted(post_cats.keys(), key=post_priority)[:20]
 
-                if not snippets:
+            # 每個帖文各自送 DeepSeek 一次
+            for pid in sorted_pids:
+                p     = post_obj[pid]
+                cats  = post_cats[pid]   # set of (cat, sub) this post matched
+                title = (p.get("title") or "").strip()
+                desc  = (p.get("description") or "").strip()
+                if len(desc) < 30 and p.get("raw_json"):
+                    try:
+                        raw  = json.loads(p["raw_json"])
+                        desc = (raw.get("desc") or raw.get("content") or raw.get("shortDesc") or desc).strip()
+                    except:
+                        pass
+                if not title and not desc:
                     continue
 
-                gov_names  = "、".join(a["name"] for a in activities if a.get("source") == "government") or "（無）"
-                # ✏️ NEW: 加入跨 operator 已提取活動，避免重複（如 BLACKPINK 同時出現喺多個 operator）
+                post_date = ""
+                if p.get("raw_json"):
+                    try:
+                        raw = json.loads(p["raw_json"])
+                        dt  = raw.get("create_date_time") or raw.get("time") or ""
+                        if dt:
+                            post_date = f"（帖文發佈：{str(dt)[:10]}）"
+                    except:
+                        pass
+
+                snippet = f"【帖文】{post_date}標題: {title}\n內容: {desc[:300] or '(空)'}"
+
                 all_seen_names = set(a["name"] for a in activities if a.get("source") == "government") | globally_extracted_names
-                seen_hint = "、".join(sorted(all_seen_names)) if all_seen_names else "（無）"
+                seen_hint  = "、".join(sorted(all_seen_names)) if all_seen_names else "（無）"
                 date_hint  = (
                     f"參考資訊：用戶查詢日期範圍為 {from_date} 至 {to_date}。"
                     f"活動日期必須從帖文原文中明確提取，嚴禁根據查詢範圍推算、估計或捏造日期。"
-                    f"若帖文冇明確提及活動具體日期，date 欄位必須填 null，唔好填查詢範圍內嘅任何日期。"
+                    f"若帖文冇明確提及活動具體日期，date 欄位必須填 null。"
                 ) if from_date and to_date else ""
-                focus      = CAT_FOCUS.get(sub or cat, "活動名稱、日期、地點、票價")
+
+                # 列出呢個帖文 match 到嘅所有 category，供 DeepSeek 參考
+                cat_list = "、".join(sorted({sub or cat for cat, sub in cats}))
 
                 prompt = f"""你係澳門活動資訊整合助手。以下係來自社交媒體關於澳門{op_key}嘅帖文。{date_hint}
 
+帖文可能同時包含多個獨立活動，涉及以下類別：{cat_list}
+
 你的任務：
-1. 只提取真正的【演出/活動】本身，唔要提取周邊優惠（如餐廳折扣、會員優惠等）
+1. 識別帖文中每一個獨立【演出/活動】，唔要提取周邊優惠
 2. 相同活動只算一個（去重）
-3. 以下活動已提取，唔需要重複（包括官方數據及其他運營商已識別活動）：{seen_hint}
+3. 以下活動已提取，唔需要重複：{seen_hint}
 4. 每個獨立活動輸出一個 JSON object：
    - "name": 活動名稱（簡潔，20字以內）
-   - "description": 重點描述，聚焦「{focus}」，50-80字，繁體中文
-   - "date": 活動日期，必須係帖文原文中明確出現嘅日期（格式 YYYY-MM-DD 或 YYYY-MM-DD~YYYY-MM-DD）。若帖文只提到星期幾、「每週」、開放時間、或冇任何具體日期，填 null。嚴禁根據查詢日期範圍推算或猜測日期，寧願填 null 都唔好估。
+   - "description": 重點描述，50-80字，繁體中文
+   - "date": 活動日期，必須係帖文原文中明確出現嘅日期（格式 YYYY-MM-DD 或 YYYY-MM-DD~YYYY-MM-DD）。冇明確日期填 null，嚴禁猜測。
    - "location": 地點（冇就填 null）
+   - "category": 活動類別，從以下選擇：concert、sport、crossover、experience、exhibition、food、accommodation、shopping、gaming
 5. 只返回 JSON array，唔需要任何前言
 
 帖文內容：
-{chr(10).join(snippets)}
+{snippet}
 
 直接輸出 JSON array："""
 
                 try:
-                    resp     = client.chat.completions.create(
+                    resp      = client.chat.completions.create(
                         model="deepseek-chat",
                         messages=[{"role": "user", "content": prompt}],
                         max_tokens=800,
                     )
-                    raw_resp = re.sub(r'^```[a-z]*\n?', '', (resp.choices[0].message.content or "").strip()).rstrip('`').strip()
+                    raw_resp  = re.sub(r'^```[a-z]*\n?', '', (resp.choices[0].message.content or "").strip()).rstrip('`').strip()
                     extracted = json.loads(raw_resp)
-                    print(f"✅ DeepSeek 識別 {len(extracted)} 個獨立活動 (cat={sub or cat})")
+                    print(f"✅ DeepSeek 識別 {len(extracted)} 個獨立活動（帖文 {pid}）")
                 except Exception as e:
                     print(f"⚠️ DeepSeek 出錯: {e}")
-                    best = next((p for p in posts_group if p.get("title")), posts_group[0])
-                    extracted = [{"name": (best.get("title") or "")[:40] or f"{op_key} {sub or cat}活動",
-                                  "description": make_description(best), "date": None, "location": None}]
+                    extracted = [{"name": title[:40] or f"{op_key}活動",
+                                  "description": make_description(p),
+                                  "date": None, "location": None, "category": None}]
 
                 for item in extracted:
+                    item_name = (item.get("name") or "").strip()
+                    item_desc = (item.get("description") or "").strip()
+                    item_cat  = (item.get("category") or "").strip().lower()
+                    # 用 DeepSeek 返回嘅 category，fallback 到帖文第一個 match category
+                    cat = item_cat if item_cat else next(iter(cats))[1] or next(iter(cats))[0]
+                    sub = None
+                    # concert/sport/crossover 係 entertainment 嘅 sub_type
+                    if cat in ("concert", "sport", "crossover"):
+                        sub, cat_out = cat, "entertainment"
+                    else:
+                        sub, cat_out = None, cat
+
+                    # ✏️ 強制 description 轉繁體，避免 DeepSeek 返回簡體
+                    try:
+                        from trad_simp import to_trad as _to_trad
+                        item_desc = _to_trad(item_desc)
+                        item_name = _to_trad(item_name)
+                    except Exception:
+                        pass
+
+                    # keyword 相關性後過濾
+                    if keyword and keyword.strip():
+                        kw_variants = _kw_variants_for_filter(keyword.strip())
+                        item_text   = (item_name + " " + item_desc).upper()
+                        if not any(v.upper() in item_text for v in kw_variants):
+                            print(f"⏭️ keyword 過濾：'{item_name}' 與關鍵字「{keyword.strip()}」無關，跳過")
+                            continue
+
                     item_date = (item.get("date") or "").strip()
 
-                    # ✏️ NEW: 驗證日期係咪真係出現喺帖文原文，唔係就視為 hallucination → reset null
+                    # 日期 hallucination 防護
                     if item_date and item_date not in ("N/A", "null", "None", ""):
-                        all_snippets_text = " ".join(snippets)
-                        # 取日期前8字（YYYY-MM-D 或 YYYY-MM），睇吓帖文有冇提及
-                        date_prefix = item_date[:7]  # e.g. "2026-02"
-                        date_day    = item_date[:10] # e.g. "2026-02-14"
-                        # 帖文文字要有年份同月份先算有明確日期
-                        if date_day not in all_snippets_text and date_prefix not in all_snippets_text:
+                        def _date_in_text(d, txt):
+                            d = d.split("~")[0].strip()[:10]
+                            if d in txt or d[:7] in txt:
+                                return True
+                            try:
+                                import datetime as _dt
+                                obj  = _dt.date.fromisoformat(d)
+                                m, day = obj.month, obj.day
+                                if re.search(rf'{m}月{day}[日号]?', txt): return True
+                                if day == 1 and re.search(rf'(?<!\d){m}月(?!\d)', txt): return True
+                                if re.search(rf'(?<!\d){m}[./]{day:02d}(?!\d)', txt): return True
+                                EN_MON = ['','Jan','Feb','Mar','Apr','May','Jun',
+                                          'Jul','Aug','Sep','Oct','Nov','Dec']
+                                if re.search(rf'{EN_MON[m]}[\s.]*{day}', txt, re.IGNORECASE): return True
+                            except Exception:
+                                pass
+                            return False
+                        if not _date_in_text(item_date, snippet):
                             print(f"⚠️ 日期 '{item_date}' 唔見於帖文原文，reset 做 null（防止 hallucination）")
                             item_date = ""
+
+                    # ✏️ DeepSeek 冇日期時，fallback 用 DB 已解析嘅 event_date
+                    if not item_date or item_date in ("N/A", "null", "None", ""):
+                        db_date = str(p.get("event_date") or "").strip()
+                        if db_date and db_date not in ("nan", "None", "NaN", ""):
+                            item_date = db_date  # 保留完整多段日期，前端 formatEventDate 負責顯示
+                            print(f"📅 '{item_name}' 用 DB event_date 補填: {item_date}")
+
+                    # 日期範圍過濾（用 dates_overlap 正確處理多段逗號日期）
                     if from_date and to_date:
                         if item_date and item_date not in ("N/A", "null", "None", ""):
-                            # 有日期：做精確範圍過濾，範圍外就跳過
+                            if not dates_overlap(item_date, pd.to_datetime(from_date), pd.to_datetime(to_date)):
+                                print(f"⏭️ 日期範圍外，跳過: {item_name} ({item_date})")
+                                continue
+                        # 仍然冇日期：用帖文發佈日期判斷是否「常駐/進行中」活動
+                        # 如果帖文喺查詢範圍前後 90 日內發佈，視為進行中，保留
+                        else:
                             try:
-                                parts    = item_date.split("~")
-                                ev_start = pd.to_datetime(parts[0].strip())
-                                ev_end   = pd.to_datetime(parts[-1].strip())
-                                if not (ev_start <= pd.to_datetime(to_date) and ev_end >= pd.to_datetime(from_date)):
-                                    continue
-                            except:
-                                pass
-                        # 冇日期：保留（唔知日期唔代表唔係範圍內）
-                    item_name = (item.get("name") or "").strip()
-                    # ✏️ NEW: 跨 operator dedup — 已見過嘅活動名稱跳過
+                                rj = json.loads(p.get("raw_json") or "{}")
+                                pub_str = rj.get("create_date_time") or rj.get("time") or ""
+                                if pub_str:
+                                    pub_dt    = pd.to_datetime(str(pub_str)[:10])
+                                    range_start = pd.to_datetime(from_date)
+                                    range_end   = pd.to_datetime(to_date)
+                                    window_start = range_start - pd.Timedelta(days=90)
+                                    window_end   = range_end   + pd.Timedelta(days=90)
+                                    if window_start <= pub_dt <= window_end:
+                                        print(f"📌 '{item_name}' 冇日期但帖文發佈於查詢範圍附近（{str(pub_dt)[:10]}），視為常駐活動保留")
+                                    else:
+                                        print(f"⏭️ '{item_name}' 冇日期且帖文太舊（{str(pub_dt)[:10]}），跳過")
+                                        continue
+                                else:
+                                    print(f"📌 '{item_name}' 冇日期亦冇發佈時間，保留（可能係政府/常駐資料）")
+                            except Exception:
+                                print(f"📌 '{item_name}' 冇日期，parse 失敗，保留")
+
+                    # 跨 operator dedup
                     if item_name and item_name in globally_extracted_names:
                         print(f"⏭️ 跨 operator 重複，跳過: {item_name}")
                         continue
+
                     activities.append({
                         "name":        item_name,
-                        "description": (item.get("description") or "暫無描述").strip(),
-                        "date":        item_date or "N/A",
+                        "description": item_desc or "暫無描述",
+                        "date":        _resolve_overlapping_dates(item_date, post_text=f"{title}\n{desc}", activity_name=item_name),
                         "location":    item.get("location") or "",
-                        "category":    cat,
+                        "category":    cat_out,
                         "sub_type":    sub,
                     })
                     if item_name:
@@ -522,6 +775,61 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
         "operator_summaries": all_summaries,       # 向下兼容
         "category_summaries": dict(cat_summaries), # 新格式：by category
     }
+
+@app.post("/api/hot-themes")
+async def hot_themes(payload: dict):
+    """
+    接收 event names + descriptions，用 DeepSeek 返回 2-3 個 semantic hot themes。
+    payload: { "events": [ {"name": "...", "description": "..."}, ... ] }
+    """
+    events = payload.get("events", [])
+    if not events:
+        return {"themes": []}
+
+    lines = []
+    for i, ev in enumerate(events[:200], 1):
+        name = (ev.get("name") or "").strip()
+        desc = (ev.get("description") or ev.get("desc") or "").strip()[:80]
+        if name:
+            lines.append(f"{i}. {name}{'：' + desc if desc else ''}")
+
+    if not lines:
+        return {"themes": []}
+
+    event_list = "\n".join(lines)
+    prompt = f"""以下係澳門各博企近期嘅活動列表：
+
+{event_list}
+
+請分析以上活動，識別出 2-3 個最突出嘅市場主題（hot themes）。
+主題應該係具體嘅概念，例如「韓星演唱會」、「葡萄酒品鑑」、「沉浸式體驗」、「非遺文化」，而唔係籠統嘅字眼如「活動」、「體驗」、「娛樂」。
+每個主題用 3-8 個字表達，繁體中文。
+
+只返回 JSON array，例如：["韓星演唱會熱潮", "精品葡萄酒文化", "沉浸式視覺體驗"]
+唔需要任何解釋，只輸出 JSON array。"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+        themes = json.loads(raw)
+        if not isinstance(themes, list):
+            themes = []
+        try:
+            from trad_simp import to_trad as _to_trad
+            themes = [_to_trad(t) for t in themes[:3]]
+        except Exception:
+            themes = themes[:3]
+        print(f"🔥 Hot themes: {themes}")
+        return {"themes": themes}
+    except Exception as e:
+        print(f"⚠️ hot_themes 出錯: {e}")
+        return {"themes": []}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=9038)
