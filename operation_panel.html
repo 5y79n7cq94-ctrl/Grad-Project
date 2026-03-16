@@ -488,6 +488,136 @@
         font-weight: 600;
     }
     .card-link:hover { text-decoration: underline; }
+    /* ===== Results Summary Banner ===== */
+    .results-summary-banner {
+        background: linear-gradient(135deg, rgba(37,99,235,0.06) 0%, rgba(22,163,74,0.06) 100%);
+        border: 1px solid rgba(37,99,235,0.16);
+        border-radius: 18px;
+        padding: 18px 20px;
+        margin-bottom: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+    .summary-top-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .summary-title {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+        color: var(--brand);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .summary-date-range {
+        font-size: 12px;
+        font-weight: 600;
+        color: rgba(15,23,42,0.55);
+        background: rgba(37,99,235,0.08);
+        padding: 4px 10px;
+        border-radius: 20px;
+        border: 1px solid rgba(37,99,235,0.14);
+    }
+    .summary-stats-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 10px;
+    }
+    .summary-stat {
+        background: rgba(255,255,255,0.85);
+        border: 1px solid rgba(15,23,42,0.08);
+        border-radius: 14px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        box-shadow: 0 2px 6px rgba(15,23,42,0.04);
+    }
+    .summary-stat-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+        color: rgba(15,23,42,0.45);
+    }
+    .summary-stat-value {
+        font-size: 18px;
+        font-weight: 750;
+        color: var(--text);
+        line-height: 1.1;
+    }
+    .summary-stat-sub {
+        font-size: 10.5px;
+        color: rgba(15,23,42,0.50);
+        font-weight: 500;
+        line-height: 1.3;
+    }
+    .summary-breakdown-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .summary-section {
+        flex: 1;
+        min-width: 200px;
+        background: rgba(255,255,255,0.75);
+        border: 1px solid rgba(15,23,42,0.08);
+        border-radius: 14px;
+        padding: 10px 14px;
+    }
+    .summary-section-title {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+        color: rgba(15,23,42,0.45);
+        margin-bottom: 7px;
+    }
+    .summary-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+    .summary-chip {
+        font-size: 11px;
+        font-weight: 600;
+        padding: 3px 9px;
+        border-radius: 20px;
+        white-space: nowrap;
+    }
+    .summary-chip-op {
+        background: rgba(37,99,235,0.10);
+        color: #1D4ED8;
+        border: 1px solid rgba(37,99,235,0.18);
+    }
+    .summary-chip-cat {
+        background: rgba(22,163,74,0.10);
+        color: #15803D;
+        border: 1px solid rgba(22,163,74,0.18);
+    }
+    .summary-chip-hot {
+        background: rgba(234,88,12,0.10);
+        color: #C2410C;
+        border: 1px solid rgba(234,88,12,0.20);
+    }
+    .hot-tag {
+        font-size: 10px;
+        font-weight: 700;
+        background: rgba(234,88,12,0.14);
+        color: #C2410C;
+        padding: 1px 6px;
+        border-radius: 10px;
+        margin-left: 4px;
+        vertical-align: middle;
+    }
+
     .crawling-banner {
         background: rgba(251,191,36,0.15);
         border: 1px solid rgba(251,191,36,0.4);
@@ -1085,8 +1215,143 @@
         mgm:'#991B1B', melco:'#6D28D9', sjm:'#0E7490', government:'#374151'
     };
 
+    // ── Hot Themes via DeepSeek (semantic) ───────────────────
+    async function fetchHotThemes(catData) {
+        const events = [];
+        for (const acts of Object.values(catData)) {
+            for (const act of acts) {
+                if (act.name) events.push({
+                    name: act.name,
+                    description: act.description || act.desc || ""
+                });
+            }
+        }
+        if (events.length === 0) return [];
+        try {
+            const resp = await fetch("http://127.0.0.1:9038/api/hot-themes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ events })
+            });
+            const data = await resp.json();
+            return Array.isArray(data.themes) ? data.themes : [];
+        } catch (e) {
+            console.warn("hot-themes fetch failed:", e);
+            return [];
+        }
+    }
+
+    // ── Summary Banner（event cards 上方）─────────────────────
+    async function buildSummaryBanner(catData, filterParams) {
+        const { fromDate, toDate } = filterParams || {};
+
+        // ── Aggregate stats ───────────────────────────────────
+        const totalEvents = Object.values(catData).reduce((s,a) => s + a.length, 0);
+        const catCounts   = {};
+        const opCounts    = {};
+
+        for (const [catKey, acts] of Object.entries(catData)) {
+            catCounts[catKey] = acts.length;
+            for (const act of acts) {
+                const op = (act.operator || 'unknown').toLowerCase();
+                opCounts[op] = (opCounts[op] || 0) + 1;
+            }
+        }
+
+        const sortedOps  = Object.entries(opCounts).sort((a,b) => b[1]-a[1]);
+        const sortedCats = Object.entries(catCounts).sort((a,b) => b[1]-a[1]);
+        const activeOpCount = sortedOps.length;
+        const topOp      = sortedOps[0]?.[0] ?? null;
+        const topOpLabel = topOp ? (OP_LABELS[topOp] || topOp) : '—';
+        const topOpCount = sortedOps[0]?.[1] ?? 0;
+
+        // ── Date range display ────────────────────────────────
+        let dateRangeHtml;
+        if (fromDate || toDate) {
+            const f = fromDate || '—';
+            const t = toDate   || '—';
+            dateRangeHtml = `<span class="summary-date-range">📅 ${f} → ${t}</span>`;
+        } else {
+            dateRangeHtml = `<span class="summary-date-range">📅 All Dates</span>`;
+        }
+
+        // ── Operator chips (ranked) ───────────────────────────
+        const opChipsHtml = sortedOps.map(([op, cnt], i) => {
+            const label = OP_LABELS[op] || (op[0].toUpperCase()+op.slice(1));
+            const color = OP_COLORS[op] || '#6B7280';
+            return `<span class="summary-chip" style="background:${color}14;color:${color};border:1px solid ${color}28;">
+                ${i === 0 ? '🥇 ' : i === 1 ? '🥈 ' : i === 2 ? '🥉 ' : ''}${label} <b>${cnt}</b>
+            </span>`;
+        }).join('');
+
+        // ── Category chips (ranked) ───────────────────────────
+        const catChipsHtml = sortedCats.map(([k, cnt]) => {
+            const cfg = CAT_CONFIG[k] || { icon:'📍', label: k.toUpperCase(), color:'#6B7280' };
+            return `<span class="summary-chip" style="background:${cfg.color}12;color:${cfg.color};border:1px solid ${cfg.color}28;">
+                ${cfg.icon} ${cfg.label} <b>${cnt}</b>
+            </span>`;
+        }).join('');
+
+        // ── Assemble banner with loading placeholder for themes ──
+        const banner = document.createElement('div');
+        banner.className = 'results-summary-banner';
+        banner.innerHTML = `
+            <div class="summary-top-row">
+                <div class="summary-title">📊 Results Summary</div>
+                ${dateRangeHtml}
+            </div>
+            <div class="summary-stats-row">
+                <div class="summary-stat">
+                    <div class="summary-stat-label">Total Events</div>
+                    <div class="summary-stat-value">${totalEvents}</div>
+                    <div class="summary-stat-sub">${activeOpCount} active operator${activeOpCount !== 1 ? 's' : ''}</div>
+                </div>
+                <div class="summary-stat">
+                    <div class="summary-stat-label">Most Active</div>
+                    <div class="summary-stat-value" style="font-size:15px;">${topOpLabel}</div>
+                    <div class="summary-stat-sub">${topOpCount} event${topOpCount !== 1 ? 's' : ''}</div>
+                </div>
+                <div class="summary-stat" style="grid-column: span 2;">
+                    <div class="summary-stat-label">🔥 Hot Themes</div>
+                    <div id="hotThemesSlot" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+                        <span style="color:rgba(15,23,42,0.35);font-size:12px;font-style:italic;">Analysing themes…</span>
+                    </div>
+                </div>
+            </div>
+            <div class="summary-breakdown-row">
+                <div class="summary-section" style="flex:2;">
+                    <div class="summary-section-title">🏢 Operators — ranked by events</div>
+                    <div class="summary-chips">${opChipsHtml || '<span style="color:rgba(15,23,42,0.4);font-size:12px;">—</span>'}</div>
+                </div>
+                <div class="summary-section" style="flex:2;">
+                    <div class="summary-section-title">🎭 Categories — ranked by events</div>
+                    <div class="summary-chips">${catChipsHtml || '<span style="color:rgba(15,23,42,0.4);font-size:12px;">—</span>'}</div>
+                </div>
+            </div>
+        `;
+
+        // ── Fire async DeepSeek call, inject result when ready ──
+        fetchHotThemes(catData).then(themes => {
+            const slot = banner.querySelector('#hotThemesSlot');
+            if (!slot) return;
+            const hotColors = ['#DC2626','#D97706','#7C3AED'];
+            slot.innerHTML = themes.length
+                ? themes.map((kw, i) => `
+                    <span class="summary-chip" style="
+                        background:${hotColors[i % hotColors.length]}14;
+                        color:${hotColors[i % hotColors.length]};
+                        border:1px solid ${hotColors[i % hotColors.length]}30;
+                        font-size:12px;padding:4px 12px;">
+                        🔥 ${kw}
+                    </span>`).join('')
+                : `<span style="color:rgba(15,23,42,0.4);font-size:12px;font-style:italic;">Not enough data</span>`;
+        });
+
+        return banner;
+    }
+
     // ── 核心：Group by Category 渲染 ─────────────────────────
-    function _renderGroupedBody(data, container) {
+    async function _renderGroupedBody(data, container) {
         if (!container) container = document.getElementById("analyticsContent");
         if (!container) return;
 
@@ -1121,6 +1386,15 @@
                 暫無符合條件的活動，爬蟲完成後將自動刷新。</div>`;
             return;
         }
+
+        // ── 插入 Summary Banner ───────────────────────────────
+        const filterParams = {
+            fromDate:     ($("fromDate") || {}).value  || '',
+            toDate:       ($("toDate")   || {}).value  || '',
+            selectedCats: typeof getSelectedValues === 'function' ? getSelectedValues("category") : [],
+            selectedOps:  typeof getSelectedValues === 'function' ? getSelectedValues("operator")  : [],
+        };
+        container.appendChild(await buildSummaryBanner(catData, filterParams));
 
         // 按 CAT_CONFIG 定義嘅順序渲染
         const orderedCats = [...CAT_KEYS, ...Object.keys(catData).filter(k => !CAT_KEYS.includes(k))];
