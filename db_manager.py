@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import os
 import datetime
-
+from post_normalizer import auto_normalize_new_post, init_post_tables
 DB_PATH = "C:/Users/user/MediaCrawler/macau_analytics.db"
 
 CRAWL_EXPIRY_DAYS = 7  # operator+category 超過幾日先重新爬
@@ -126,6 +126,7 @@ def ingest_government_data(file_path):
         print(f"❌ 搵唔到檔案: {file_path}")
         return
     conn = get_connection()
+    init_post_tables(conn) 
     df = pd.read_csv(file_path) if file_path.endswith('.csv') else pd.read_excel(file_path)
     cursor = conn.cursor()
     count = 0
@@ -154,6 +155,13 @@ def ingest_government_data(file_path):
               json.dumps(row.to_dict(), ensure_ascii=False)))
         if cursor.rowcount > 0:
             count += 1
+            auto_normalize_new_post(
+                conn, platform, post,
+                operator=op,
+                event_date=event_date,
+                category=category_str,
+            )
+
     conn.commit()
     conn.close()
     print(f"🚀 政府數據入庫成功：共 {count} 條｜跳過噪音: {skipped_noise} 條")
@@ -292,6 +300,13 @@ def _scan_all_dates(text, pub_year, pub_month, pub_day=None):
         add(f"{dt}~{dt}", m.span())
 
     # ── 有年份多日 ────────────────────────────────────────────
+    # ✏️ NEW: YYYY年M月D日 至 YYYY年M月D日（兩邊都有年份，跨月或跨年範圍）
+    for m in re.finditer(
+        r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*[至–\-~到]\s*(\d{4})年(\d{1,2})月(\d{1,2})日', text):
+        if overlaps(m.span()): continue
+        y1,m1,d1,y2,m2,d2 = m.groups()
+        add(f"{_fmt(y1,m1,d1)}~{_fmt(y2,m2,d2)}", m.span())
+
     for m in re.finditer(
         r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*[至–\-~到]\s*(\d{1,2})月(\d{1,2})日', text):
         if overlaps(m.span()): continue
@@ -434,6 +449,37 @@ def _scan_all_dates(text, pub_year, pub_month, pub_day=None):
         add(f"{_fmt(y,mo,1)}~{_fmt(y,mo,last)}", m.span())
 
     results.sort(key=lambda x: x[0])
+
+    # ✏️ FIX: 若同月已有更精確嘅日期，移除整月展開（避免「5月」被展開成 5/1~5/31 蓋過 5/1~5/3）
+    import datetime as _dt2
+    def _is_whole_month(seg):
+        parts = seg.split('~')
+        if len(parts) != 2: return None
+        try:
+            s = _dt2.date.fromisoformat(parts[0].strip())
+            e = _dt2.date.fromisoformat(parts[1].strip())
+            if (s.day == 1 and e.day == calendar.monthrange(s.year, s.month)[1]
+                    and s.month == e.month and s.year == e.year):
+                return (s.year, s.month)
+        except Exception:
+            pass
+        return None
+
+    precise_months = set()
+    for _, seg, _ in results:
+        ym = _is_whole_month(seg)
+        if ym is None:  # 非整月 → 記錄為「有精確日期」
+            parts = seg.split('~')
+            try:
+                s = _dt2.date.fromisoformat(parts[0].strip())
+                precise_months.add((s.year, s.month))
+            except Exception:
+                pass
+
+    filtered = [(pos, seg, jiri) for pos, seg, jiri in results
+                if _is_whole_month(seg) is None or _is_whole_month(seg) not in precise_months]
+    results = filtered
+
     return [(r, j) for _, r, j in results]
 
 
@@ -559,24 +605,33 @@ def _detect_all_categories(text):
     CATEGORY_KEYWORDS = {
         "food":          ["美食","餐廳","餐飲","自助餐","下午茶","食評","RESTAURANT","BUFFET",
                           "DINING","茶餐廳","扒房","點心","餐厅","餐饮","茶餐厅","晚宴","宴席",
-                          "春茗","酒吧","調酒","雞尾酒","特調","微醺","BAR","COCKTAIL","调酒"],
+                          "春茗","酒吧","調酒","雞尾酒","特調","微醺","BAR","COCKTAIL","调酒",
+                          "吃什么","咖啡","食物","喝茶","佳肴","美味","口感","料理","风味","口味",
+                          "一口","年糕","甜度","餐桌","汤","饮品","米其林","地道小食","茶楼","雪糕","酒"],
         "concert":       ["演唱會","音樂會","FANMEETING","見面會","CONCERT","FANCON","演出","音樂",
                           "演唱会","音乐会","见面会","巡演","世巡","开唱","抢票","LIVE TOUR","SHOWCASE",
                           "演出季","音樂劇","歌劇","話劇","舞劇","京劇","粵劇",
-                          "音乐剧","歌剧","话剧","舞剧","京剧","粤剧"],
+                          "音乐剧","歌剧","话剧","舞剧","京剧","粤剧",
+                          "银河综艺馆","百老汇舞台","歌手","银河票务","门票","伦敦人综艺馆"],
         "sport":         ["長跑","馬拉松","MARATHON","十公里","10公里","10K","長跑賽","乒乓球",
                           "马拉松","长跑","UFC","格斗","格蘭披治大賽","FISE",
-                          "高爾夫球賽","高爾夫賽事","高尔夫球赛","高尔夫赛事"],
+                          "高爾夫球賽","高爾夫賽事","高尔夫球赛","高尔夫赛事","乒兵球","选手"],
         "crossover":     ["聯名","快閃","POP-UP","POPUP","限定","CROSSOVER","泡泡瑪特","POPMART",
-                          "主題展覽","联名","快闪","泡泡玛特"],
+                          "主題展覽","联名","快闪","泡泡玛特","主題快閃","主題餐飲","贝克汉姆"],
         "entertainment": ["演唱會","音樂會","FANMEETING","見面會","CONCERT","長跑","馬拉松",
                           "演唱会","音乐会","见面会","马拉松","巡演","世巡"],
         "exhibition":    ["展覽","展出","藝術展","ART EXHIBITION","EXPO","TEAMLAB","博物館",
-                          "展示館","紀念館","展览","艺术展","艺术","博物馆","展示馆","纪念馆"],
+                          "展示館","紀念館","展览","艺术展","艺术","博物馆","展示馆","纪念馆",
+                          "博览","特展","作品展","展品","展区","畫展","藝術","花展"],
         "experience":    ["常駐","VR","SANDBOX","沉浸式","體驗館","水舞間","主題樂園",
-                          "体验","主题乐园","天浪淘园","星动银河"],
-        "accommodation": ["酒店優惠","住宿","套票","HOTEL PACKAGE","酒店","套餐","度假"],
-        "shopping":      ["購物","折扣","優惠券","购物","优惠券","时尚汇","旗舰店","精品店"],
+                          "体验","主题乐园","天浪淘园","星动银河",
+                          "喜剧节","新春市集","贺岁","游戏","spa","健身","水疗","跑步机",
+                          "魔法","魔术","打卡","游乐","乐园","主題音樂匯演"],
+        "accommodation": ["酒店優惠","住宿","套票","HOTEL PACKAGE","酒店","套餐","度假",
+                          "嘉佩乐","套房","客房","早餐","福布斯","瑞吉酒店",
+                          "伦敦人御园","伦敦人酒店","豪华房"],
+        "shopping":      ["購物","折扣","優惠券","购物","优惠券","时尚汇","旗舰店","精品店",
+                          "百货","好物","產品","紀念品","手信","购物中心","消费"],
         "gaming":        ["博彩","賭場","CASINO","積分兌換","貴賓","博彩","赌场","积分","贵宾"],
     }
     CATEGORY_EXCLUDES = {
@@ -600,6 +655,7 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
         print(f"❌ 搵唔到 JSON: {json_file}")
         return
     conn = get_connection()
+    init_post_tables(conn)
     cursor = conn.cursor()
     with open(json_file, 'r', encoding='utf-8') as f:
         posts = json.load(f)
@@ -675,6 +731,12 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
               json.dumps(post, ensure_ascii=False)))
         if cursor.rowcount > 0:
             count += 1
+            auto_normalize_new_post(
+                conn, platform, post,
+                operator=op,
+                event_date=event_date,
+                category=category_str,
+            )
 
     conn.commit()
     conn.close()
@@ -735,33 +797,52 @@ def query_db_by_filters(keyword, operators, category, max_pub_age_days=180, from
         "food":          ["美食", "餐廳", "餐飲", "自助餐", "下午茶", "食評", "restaurant", "buffet", "dining", "茶餐廳", "扒房", "點心",
                           "餐厅", "餐饮", "茶餐厅", "美食地图", "自助餐", "下午茶", "晚宴", "宴席", "春茗",
                           # ✏️ 酒吧/調酒
-                          "酒吧", "調酒", "雞尾酒", "特調", "微醺", "bar", "cocktail", "调酒", "鸡尾酒", "特调"],
+                          "酒吧", "調酒", "雞尾酒", "特調", "微醺", "bar", "cocktail", "调酒", "鸡尾酒", "特调",
+                          # ✏️ 新增關鍵字
+                          "吃什么", "咖啡", "食物", "喝茶", "佳肴", "美味", "口感", "料理", "风味", "口味",
+                          "一口", "年糕", "甜度", "餐桌", "汤", "饮品", "米其林", "地道小食", "茶楼", "雪糕", "酒"],
         # ✏️ 移除「售票」「澳門站」「入場須知」(太廣)
         "concert":       ["演唱會", "音樂會", "fanmeeting", "見面會", "concert", "fancon", "演出", "音樂",
                           "演唱会", "音乐会", "见面会", "巡演", "世巡", "开唱", "抢票", "開始售票", "即將開售",
                           "live tour", "live in", "showcase",
                           "演出季", "音樂劇", "歌劇", "話劇", "舞劇", "京劇", "粵劇",
-                          "音乐剧", "歌剧", "话剧", "舞剧", "京剧", "粤剧"],
+                          "音乐剧", "歌剧", "话剧", "舞剧", "京剧", "粤剧",
+                          # ✏️ 新增關鍵字
+                          "银河综艺馆", "百老汇舞台", "歌手", "银河票务", "门票", "伦敦人综艺馆"],
         # ✏️ 移除「游泳」「GT」「賽車」「赛车」「sport」「race」「运动」「體育」(太廣或誤觸)
         # ✏️ 移除「GOLF」「高爾夫」— J.LINDEBERG時裝品牌描述有「高爾夫」主線誤觸
         "sport":         ["長跑", "馬拉松", "運動比賽", "marathon", "十公里", "10公里", "10k", "長跑賽", "乒乓球",
                           "马拉松", "长跑", "ufc", "格斗", "格蘭披治大賽", "格兰披治大赛", "fise",
-                          "高爾夫球賽", "高爾夫賽事", "高尔夫球赛", "高尔夫赛事"],
+                          "高爾夫球賽", "高爾夫賽事", "高尔夫球赛", "高尔夫赛事",
+                          # ✏️ 新增關鍵字
+                          "乒兵球", "选手"],
         # ✏️ 移除「主題展」(動物標本館有「主題展室」)
         "crossover":     ["聯名", "快閃", "pop-up", "popup", "限定", "crossover", "泡泡瑪特", "popmart", "主題展覽",
-                          "联名", "快闪", "泡泡玛特"],
+                          "联名", "快闪", "泡泡玛特",
+                          # ✏️ 新增關鍵字
+                          "主題快閃", "主題餐飲", "贝克汉姆"],
         "entertainment": ["演唱會", "音樂會", "fanmeeting", "見面會", "concert", "長跑", "馬拉松", "marathon", "十公里",
                           "演唱会", "音乐会", "见面会", "马拉松", "巡演", "世巡"],
         # ✏️ 新增「博物館」「博物馆」
         "exhibition":    ["展覽", "展出", "藝術展", "art exhibition", "expo", "teamlab", "博物館", "展示館", "紀念館",
-                          "展览", "艺术展", "艺术", "博物馆", "展示馆", "纪念馆"],
+                          "展览", "艺术展", "艺术", "博物馆", "展示馆", "纪念馆",
+                          # ✏️ 新增關鍵字
+                          "博览", "特展", "作品展", "展品", "展区", "畫展", "藝術", "花展"],
         "experience":    ["常駐", "vr", "sandbox", "沉浸式", "體驗館", "水舞間", "主題樂園",
-                          "沉浸式", "体验", "主题乐园", "天浪淘园", "星动银河"],
-        "accommodation": ["酒店優惠", "住宿", "套票", "hotel package",
-                          "酒店", "住宿", "套餐", "度假"],
+                          "沉浸式", "体验", "主题乐园", "天浪淘园", "星动银河",
+                          # ✏️ 新增關鍵字
+                          "喜剧节", "新春市集", "贺岁", "游戏", "spa", "健身", "水疗", "跑步机",
+                          "魔法", "魔术", "打卡", "游乐", "乐园", "主題音樂匯演"],
+        "accommodation": ["酒店優惠", "住宿套票", "hotel package",
+                          "酒店", "住宿", "套餐", "度假",
+                          # ✏️ 新增關鍵字
+                          "嘉佩乐", "套房", "客房", "早餐", "福布斯", "瑞吉酒店",
+                          "伦敦人御园", "伦敦人酒店", "豪华房"],
         # ✏️ 移除「SALE」「discount」(酒精免責聲明誤觸)、「商場」「优惠」(太廣)
         "shopping":      ["購物", "折扣", "優惠券",
-                          "购物", "优惠券", "时尚汇", "旗舰店", "精品店"],
+                          "购物", "优惠券", "时尚汇", "旗舰店", "精品店",
+                          # ✏️ 新增關鍵字
+                          "百货", "好物", "產品", "紀念品", "手信", "购物中心", "消费"],
         "gaming":        ["博彩", "賭場", "casino", "積分兌換", "貴賓",
                           "博彩", "赌场", "积分", "贵宾"],
     }
@@ -776,69 +857,172 @@ def query_db_by_filters(keyword, operators, category, max_pub_age_days=180, from
     cat_excl = CATEGORY_EXCLUDES.get(effective_cat, [])
 
     if effective_cat and cat_kws:
-        inc_clauses = " OR ".join(
+        # Social posts_* 表：用 content 欄位
+        inc_clauses_social = " OR ".join([f"content LIKE ?" for _ in cat_kws])
+        inc_params_social  = [f"%{k}%" for k in cat_kws]
+
+        # Gov macau_events 表：用 title + description 欄位
+        inc_clauses_gov = " OR ".join(
             [f"title LIKE ?" for _ in cat_kws] +
             [f"description LIKE ?" for _ in cat_kws]
         )
-        inc_params = [f"%{k}%" for k in cat_kws] * 2
+        inc_params_gov = [f"%{k}%" for k in cat_kws] * 2
 
         if cat_excl:
-            excl_sql = "AND (" + " AND ".join([f"title NOT LIKE ?" for _ in cat_excl]) + ")"
-            excl_params = [f"%{k}%" for k in cat_excl]
+            excl_sql_social = "AND (" + " AND ".join([f"content NOT LIKE ?"     for _ in cat_excl]) + ")"
+            excl_sql_gov    = "AND (" + " AND ".join([f"title NOT LIKE ?"       for _ in cat_excl]) + ")"
+            excl_params     = [f"%{k}%" for k in cat_excl]
         else:
-            excl_sql = ""
-            excl_params = []
+            excl_sql_social = ""
+            excl_sql_gov    = ""
+            excl_params     = []
 
-        # ✏️ FIX: 唔限制 category IS NULL，只要 title/description match 就返回
-        category_filter = f"""
+        category_filter_social = f"""
             AND (
                 category LIKE ?
-                OR ({inc_clauses}) {excl_sql}
+                OR ({inc_clauses_social}) {excl_sql_social}
             )
         """
-        extra_params = [f"%{effective_cat}%"] + inc_params + excl_params
+        category_filter_gov = f"""
+            AND (
+                category LIKE ?
+                OR ({inc_clauses_gov}) {excl_sql_gov}
+            )
+        """
+        extra_params_social = [f"%{effective_cat}%"] + inc_params_social + excl_params
+        extra_params_gov    = [f"%{effective_cat}%"] + inc_params_gov    + excl_params
     else:
-        category_filter = ""
-        extra_params = []
+        category_filter_social = ""
+        category_filter_gov    = ""
+        extra_params_social    = []
+        extra_params_gov       = []
 
     if keyword and keyword.strip():
-        # ✏️ CHANGED: 自動擴展繁簡變體，解決繁體 keyword 搜唔到簡體帖文（或相反）
-        kw_variants = _expand_trad_simp(keyword.strip())
-        keyword_clause = "(" + " OR ".join(
-            ["title LIKE ? OR description LIKE ? OR keyword LIKE ?"] * len(kw_variants)
-        ) + ")"
-        kw_params = [f"%{v}%" for v in kw_variants for _ in range(3)]
-    else:
-        keyword_clause = "1=1"
-        kw_params = []
-
-    # ✏️ FIX: XHS 嘅 time 字段係毫秒 Unix timestamp (e.g. 1772680487000)
-    # 需要除以 1000 再用 datetime() 轉換，唔可以直接同日期字串比較
-    # ✏️ CHANGED: pub_date_filter 用 from_date-90 做 cutoff
-    # XHS time 係毫秒 timestamp，Weibo create_date_time 係字串，分開處理
-    pub_date_filter = """
-        AND (
-            platform = 'government'
-            OR json_extract(raw_json, '$.create_date_time') >= ?
-            OR (
-                CAST(json_extract(raw_json, '$.time') AS INTEGER) >= ?
+        # 多關鍵字 OR：按逗號拆分，每個 keyword 獨立搜尋 content，OR 合併
+        # ✏️ 用 content 代替 title/description/keyword，兼容 posts_* 表
+        # gov 資料嘅 macau_events 子查詢用同一 clause（macau_events 有 description 欄位，
+        # 但 gov content 會係 description，WHERE clause 搵 content 係搵唔到）
+        # → gov 子查詢單獨用 title/description/keyword
+        all_clauses_social = []
+        all_clauses_gov = []
+        all_kw_params = []
+        for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]:
+            variants = _expand_trad_simp(single_kw)
+            per_kw_social = " OR ".join(["content LIKE ?"] * len(variants))
+            per_kw_gov    = " OR ".join(
+                ["title LIKE ? OR description LIKE ? OR keyword LIKE ?"] * len(variants)
             )
-        )
-    """
-    pub_cutoff_params = [pub_cutoff, pub_cutoff_ms]
+            all_clauses_social.append(f"({per_kw_social})")
+            all_clauses_gov.append(f"({per_kw_gov})")
+            all_kw_params += [f"%{v}%" for v in variants]
+        keyword_clause_social = "(" + " OR ".join(all_clauses_social) + ")"
+        keyword_clause_gov    = "(" + " OR ".join(all_clauses_gov) + ")"
+        kw_params_social = all_kw_params
+        kw_params_gov    = [f"%{v}%" for v in
+                            [v for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]
+                             for v in _expand_trad_simp(single_kw)
+                             for _ in range(3)]]
+    else:
+        keyword_clause_social = "1=1"
+        keyword_clause_gov    = "1=1"
+        kw_params_social = []
+        kw_params_gov    = []
+
+    # ✏️ CHANGED: 改從 posts_* 四個表 query（content 更整齊），
+    # 政府資料繼續從 macau_events 抽（posts_* 冇 gov 資料）
+    # 統一輸出欄位：id, platform, operator, title, description, event_date,
+    #               category, sub_type, published_at, raw_json
+    pub_date_filter_social = f"published_at >= '{pub_cutoff}'"
 
     query = f"""
-        SELECT * FROM macau_events
-        WHERE {keyword_clause}
-        AND operator IN ({ops_placeholder})
-        {category_filter}
-        {pub_date_filter}
-        ORDER BY CASE WHEN platform = 'government' THEN 0 ELSE 1 END,
-                 COALESCE(json_extract(raw_json, '$.create_date_time'),
-                          json_extract(raw_json, '$.time'), created_at) DESC
+        SELECT * FROM (
+            SELECT
+                post_id        AS id,
+                platform,
+                operator,
+                substr(content, 1, 80) AS title,
+                content        AS description,
+                event_date,
+                category,
+                sub_type,
+                published_at,
+                raw_json,
+                NULL           AS keyword,
+                1              AS gov_rank,
+                media_text
+            FROM posts_ig
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                substr(content, 1, 80),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                media_text
+            FROM posts_fb
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                COALESCE(title, substr(content, 1, 50)),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                media_text
+            FROM posts_xhs
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                substr(content, 1, 80),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                NULL AS media_text
+            FROM posts_weibo
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                id, platform, operator,
+                title, description,
+                event_date, category, sub_type,
+                created_at, raw_json, keyword,
+                0,
+                NULL AS media_text
+            FROM macau_events
+            WHERE platform = 'government'
+              AND {keyword_clause_gov}
+              AND operator IN ({ops_placeholder})
+              {category_filter_gov}
+        )
+        ORDER BY gov_rank ASC, published_at DESC
     """
 
-    params = kw_params + list(operators) + extra_params + pub_cutoff_params
+    params = (
+        kw_params_social + list(operators) + extra_params_social +   # posts_ig
+        kw_params_social + list(operators) + extra_params_social +   # posts_fb
+        kw_params_social + list(operators) + extra_params_social +   # posts_xhs
+        kw_params_social + list(operators) + extra_params_social +   # posts_weibo
+        kw_params_gov    + list(operators) + extra_params_gov        # macau_events gov
+    )
 
     try:
         df = pd.read_sql(query, conn, params=params)

@@ -83,6 +83,7 @@ CAT_RULES = [
         "抢票", "開始售票", "票務開售", "即將開售", "开始售票", "即将开售",
         "演出季", "音樂劇", "歌劇", "話劇", "舞劇", "京劇", "粵劇",
         "音乐剧", "歌剧", "话剧", "舞剧", "京剧", "粤剧",
+        "银河综艺馆", "百老汇舞台", "歌手", "银河票务", "门票", "伦敦人综艺馆",
     ]),
 
     # Sport
@@ -98,7 +99,7 @@ CAT_RULES = [
         "全運會", "全运会", "奧運", "奥运",
         "UFC", "格鬥賽", "格斗赛", "拳擊賽", "拳击赛",
         "高爾夫球賽", "高爾夫賽事", "高尔夫球赛", "高尔夫赛事", "GOLF TOURNAMENT", "GOLF OPEN",
-        "WTT", "FISE",
+        "WTT", "FISE", "乒兵球", "选手",
     ]),
 
     # Crossover: 聯名/快閃
@@ -106,12 +107,15 @@ CAT_RULES = [
     ("entertainment", "crossover", [
         "聯名", "快閃", "POP-UP", "POPUP", "泡泡瑪特", "POPMART", "主題展覽",
         "联名", "快闪", "泡泡玛特",
+        "主題快閃", "主題餐飲", "贝克汉姆",
     ]),
 
     # Experience: 沉浸式/常駐體驗
     ("experience", None, [
         "VR", "SANDBOX", "沉浸式", "體驗館", "水舞間", "主題樂園", "常駐",
         "体验馆", "主题乐园", "天浪淘园", "星动银河", "ILLUMINARIUM", "幻影空間",
+        "喜剧节", "新春市集", "贺岁", "游戏", "spa", "健身", "水疗", "跑步机",
+        "魔法", "魔术", "打卡", "游乐", "乐园", "体验", "主題音樂匯演",
     ]),
 
     # Exhibition: 展覽
@@ -119,10 +123,11 @@ CAT_RULES = [
     ("exhibition", None, [
         "展覽", "展出", "藝術展", "TEAMLAB", "EXPO", "球拍珍品", "博物館", "展示館", "紀念館",
         "展览", "艺术展", "艺荟", "博物馆", "展示馆", "纪念馆",
+        "博览", "特展", "作品展", "展品", "展区", "畫展", "藝術", "花展",
     ]),
 
     # Food
-    # ✏️ 新增酒吧/調酒詞 + 晚宴/宴
+    # ✏️ 新增酒吧/調酒詞 + 晚宴/宴 + 新關鍵字
     ("food", None, [
         "美食", "餐廳", "餐飲", "自助餐", "下午茶", "食評", "扒房", "點心", "茶餐廳",
         "火鍋", "煲仔", "葡萄酒", "品酒", "美酒", "佳釀", "評酒", "酒宴", "餐酒",
@@ -132,12 +137,18 @@ CAT_RULES = [
         # 酒吧/調酒活動
         "酒吧", "調酒", "雞尾酒", "特調", "微醺", "BAR", "COCKTAIL",
         "调酒", "鸡尾酒", "特调",
+        # 新增關鍵字
+        "吃什么", "咖啡", "食物", "喝茶", "佳肴", "美味", "口感", "料理",
+        "风味", "口味", "一口", "年糕", "甜度", "餐桌", "汤", "饮品",
+        "米其林", "地道小食", "茶楼", "雪糕", "酒",
     ]),
 
     # Accommodation
     ("accommodation", None, [
         "酒店優惠", "住宿套票", "HOTEL PACKAGE", "住宿", "度假套", "住宿禮遇",
         "酒店住客",
+        "嘉佩乐", "套房", "客房", "早餐", "福布斯", "瑞吉酒店",
+        "伦敦人御园", "伦敦人酒店", "豪华房",
     ]),
 
     # Shopping
@@ -145,6 +156,7 @@ CAT_RULES = [
     ("shopping", None, [
         "購物", "折扣", "優惠券", "購物返現",
         "购物", "优惠券", "购物返现", "时尚汇", "旗舰店",
+        "百货", "好物", "產品", "紀念品", "手信", "购物中心", "消费",
     ]),
 
     # Gaming
@@ -408,13 +420,13 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
             ed = '' if raw_ed is None or (isinstance(raw_ed, float) and pd.isna(raw_ed)) else str(raw_ed).strip()
             if ed and ed not in ('nan', 'None', 'NaN', ''):
                 return dates_overlap(ed, user_start, user_end)
-            # 冇 event_date：睇帖文發佈時間，只接受近 180 日內發佈
+            # 冇 event_date：睇帖文發佈時間，只接受近 30 日內發佈
             try:
                 rj = json.loads(row.get('raw_json') or '{}')
                 pub_str = rj.get('create_date_time') or rj.get('time') or ''
                 if pub_str:
                     pub_dt = pd.to_datetime(str(pub_str)[:10])
-                    cutoff = user_start - pd.Timedelta(days=180)
+                    cutoff = user_start - pd.Timedelta(days=30)
                     print(f"   → no event_date, pub_dt={str(pub_dt)[:10]}, cutoff={str(cutoff)[:10]}, keep={pub_dt >= cutoff}")
                     return pub_dt >= cutoff
             except:
@@ -598,7 +610,13 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                     except:
                         pass
 
-                snippet = f"【帖文】{post_date}標題: {title}\n內容: {desc[:300] or '(空)'}"
+                # media_text：過濾無效標記，無論 desc 長短都加入，由 prompt 指示 AI 自己判斷
+                media_text = (p.get("media_text") or "").strip()
+                media_text = "" if media_text in ("（無可分析內容）", "（圖片無文字）") else media_text
+
+                snippet = f"【帖文】{post_date}標題: {title}\n內容: {desc[:800] or '(空)'}"
+                if media_text:
+                    snippet += f"\n圖片OCR文字: {media_text[:800]}"
 
                 all_seen_names = set(a["name"] for a in activities if a.get("source") == "government") | globally_extracted_names
                 seen_hint  = "、".join(sorted(all_seen_names)) if all_seen_names else "（無）"
@@ -626,6 +644,7 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
    - "location": 地點（冇就填 null）
    - "category": 活動類別，從以下選擇：concert、sport、crossover、experience、exhibition、food、accommodation、shopping、gaming
 5. 只返回 JSON array，唔需要任何前言
+6. 「圖片OCR文字」係自動提取，可能含雜音。只有當中同時出現明確活動名稱同日期先參考，否則忽略。
 
 帖文內容：
 {snippet}
@@ -668,12 +687,17 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                     except Exception:
                         pass
 
-                    # keyword 相關性後過濾
+                    # keyword 相關性後過濾（多關鍵字 OR）
                     if keyword and keyword.strip():
-                        kw_variants = _kw_variants_for_filter(keyword.strip())
-                        item_text   = (item_name + " " + item_desc).upper()
-                        if not any(v.upper() in item_text for v in kw_variants):
-                            print(f"⏭️ keyword 過濾：'{item_name}' 與關鍵字「{keyword.strip()}」無關，跳過")
+                        item_text = (item_name + " " + item_desc).upper()
+                        matched = False
+                        for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]:
+                            variants = _kw_variants_for_filter(single_kw)
+                            if any(v.upper() in item_text for v in variants):
+                                matched = True
+                                break
+                        if not matched:
+                            print(f"⏭️ keyword 過濾：'{item_name}' 與關鍵字「{keyword}」無關，跳過")
                             continue
 
                     item_date = (item.get("date") or "").strip()
@@ -724,8 +748,8 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                                     pub_dt    = pd.to_datetime(str(pub_str)[:10])
                                     range_start = pd.to_datetime(from_date)
                                     range_end   = pd.to_datetime(to_date)
-                                    window_start = range_start - pd.Timedelta(days=90)
-                                    window_end   = range_end   + pd.Timedelta(days=90)
+                                    window_start = range_start - pd.Timedelta(days=30)
+                                    window_end   = range_end   + pd.Timedelta(days=30)
                                     if window_start <= pub_dt <= window_end:
                                         print(f"📌 '{item_name}' 冇日期但帖文發佈於查詢範圍附近（{str(pub_dt)[:10]}），視為常駐活動保留")
                                     else:
@@ -763,11 +787,20 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
     # ── 重組：by category，每個 activity 附上 operator 資訊 ────────
     # 同時保留 operator_summaries 向下兼容
     cat_summaries = defaultdict(list)
+    # ✏️ FIX: 跨 category 去重 — 同一活動名唔應喺多個 category 出現
+    _cat_seen_names: set = set()
     for op_key, activities in all_summaries.items():
         for act in activities:
             act_with_op = dict(act, operator=op_key)  # 每個活動加入 operator 欄位
             # 用 sub_type 優先，否則用 category
             cat_key = act.get('sub_type') or act.get('category') or 'experience'
+            act_name = (act.get('name') or '').strip()
+            dedup_key = f"{act_name}|{op_key}"
+            if act_name and dedup_key in _cat_seen_names:
+                print(f"⏭️ 跨 category 重複，跳過: {act_name} ({op_key})")
+                continue
+            if act_name:
+                _cat_seen_names.add(dedup_key)
             cat_summaries[cat_key].append(act_with_op)
 
     return {
