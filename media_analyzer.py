@@ -222,18 +222,33 @@ def reset_failed_records(conn: sqlite3.Connection):
     conn.commit()
     log.info(f"🧹 清除失敗記錄：{total} 條重置為 NULL，下次會重新分析")
 
-def get_posts_to_analyze(conn: sqlite3.Connection, limit: int, post_id: Optional[str] = None) -> list:
+def get_posts_to_analyze(conn: sqlite3.Connection, limit: int,
+                         post_id: Optional[str] = None,
+                         post_ids: Optional[list] = None) -> list:
     cursor  = conn.cursor()
     results = []
     tables  = {"posts_xhs": "xhs", "posts_ig": "ig", "posts_fb": "fb", "posts_weibo": "weibo"}
 
     for table, platform in tables.items():
         if post_id:
+            # 單一指定 post
             cursor.execute(
                 f"SELECT post_id, media_type, raw_json, media_urls FROM {table} WHERE post_id=?",
                 (post_id,)
             )
+        elif post_ids:
+            # 批量指定 post_ids（今次新入庫嘅）
+            placeholders = ",".join("?" * len(post_ids))
+            cursor.execute(f"""
+                SELECT post_id, media_type, raw_json, media_urls
+                FROM {table}
+                WHERE post_id IN ({placeholders})
+                  AND (media_text IS NULL OR media_text = '')
+                  AND media_type IN ('image','video')
+                  AND raw_json IS NOT NULL
+            """, post_ids)
         else:
+            # 全量補跑模式
             cursor.execute(f"""
                 SELECT post_id, media_type, raw_json, media_urls
                 FROM {table}
@@ -269,7 +284,7 @@ def save_media_text(conn: sqlite3.Connection, table: str, post_id: str, text: st
     log.info(f"    ✅ 儲存 [{post_id}] ({len(text)} 字)")
 
 # ── 主流程 ─────────────────────────────────────────────────
-def run(db_path=DB_PATH, limit=100, post_id=None, dry_run=False, reset_failed=False):
+def run(db_path=DB_PATH, limit=100, post_id=None, post_ids=None, dry_run=False, reset_failed=False):
     log.info("🚀 開始媒體分析（圖片 base64 模式）")
     conn = get_conn(db_path)
     ensure_media_text_col(conn)
@@ -277,8 +292,9 @@ def run(db_path=DB_PATH, limit=100, post_id=None, dry_run=False, reset_failed=Fa
     if reset_failed:
         reset_failed_records(conn)
 
-    posts = get_posts_to_analyze(conn, limit, post_id)
-    log.info(f"📋 搵到 {len(posts)} 條帖文需要分析")
+    posts = get_posts_to_analyze(conn, limit, post_id, post_ids)
+    mode  = f"指定 {len(post_ids)} 個 post_ids" if post_ids else ("全量" if not post_id else f"單一 {post_id}")
+    log.info(f"📋 [{mode}] 搵到 {len(posts)} 條帖文需要分析")
 
     if not posts:
         log.info("✅ 全部已處理"); conn.close(); return

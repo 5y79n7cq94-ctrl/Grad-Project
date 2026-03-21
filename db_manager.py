@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import os
 import datetime
+import threading as _threading
 from post_normalizer import auto_normalize_new_post, init_post_tables
 DB_PATH = "C:/Users/user/MediaCrawler/macau_analytics.db"
 
@@ -667,6 +668,7 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
     count = 0
     skipped_old = 0
     skipped_dup = 0
+    new_post_ids = []  # 今次新入庫嘅 post_id，用於觸發後處理
 
     for idx, post in enumerate(posts):
         raw_id  = post.get('note_id') or post.get('id') or post.get('mid') or str(idx)
@@ -731,6 +733,7 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
               json.dumps(post, ensure_ascii=False)))
         if cursor.rowcount > 0:
             count += 1
+            new_post_ids.append(post_id)
             auto_normalize_new_post(
                 conn, platform, post,
                 operator=op,
@@ -740,10 +743,56 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
 
     conn.commit()
     conn.close()
-    # ✏️ CHANGED: 更詳細的入庫報告
     print(f"📦 {platform.upper()} 入庫成功：{count} 條新帖 | "
           f"跳過舊帖(>{max_age_days}日): {skipped_old} | "
           f"跳過已有: {skipped_dup} | 總帖數: {len(posts)} (Keyword: {keyword})")
+
+    # ── 自動觸發後處理（OCR + 去重），唔阻塞主流程 ──
+    if new_post_ids:
+        _trigger_post_ingest_pipeline(new_post_ids)
+
+
+# ── 入庫後自動後處理 ───────────────────────────────────────
+
+def _post_ingest_pipeline(new_post_ids: list):
+    """
+    入庫後依序執行：
+      1. 圖片 OCR（只處理今次新入嘅帖文）
+      2. 全量去重 → 更新 events_deduped table
+    全程喺 background thread，唔阻塞主流程。
+    """
+    db_path = os.getenv("DB_PATH", "macau_analytics.db")
+    print(f"⚙️  [後處理] 開始處理 {len(new_post_ids)} 條新帖...")
+
+    # Step 1: 圖片 OCR
+    try:
+        from media_analyzer import run as _run_ocr
+        _run_ocr(db_path=db_path, post_ids=new_post_ids)
+    except Exception as e:
+        print(f"⚠️  [後處理] OCR 出錯（唔影響主流程）: {e}")
+
+    # Step 2: 去重 + 更新 events_deduped
+    try:
+        from process_events import run_dedup_pipeline
+        run_dedup_pipeline(db_path=db_path)
+    except Exception as e:
+        print(f"⚠️  [後處理] 去重出錯（唔影響主流程）: {e}")
+
+    print(f"✅ [後處理] 完成")
+
+
+def _trigger_post_ingest_pipeline(new_post_ids: list):
+    """另開 background thread 觸發後處理，唔阻塞入庫主流程。"""
+    if not new_post_ids:
+        return
+    t = _threading.Thread(
+        target=_post_ingest_pipeline,
+        args=(new_post_ids,),
+        daemon=True,
+        name="post-ingest-pipeline",
+    )
+    t.start()
+    print(f"🚀 [後處理] Background thread 已啟動（{len(new_post_ids)} 條新帖）")
 
 
 # ── 查詢 ──────────────────────────────────────────────────

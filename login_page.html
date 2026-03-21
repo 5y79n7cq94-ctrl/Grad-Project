@@ -425,7 +425,7 @@ input:focus, select:focus{outline:none; border-color:var(--brand); background:#f
 </div><!-- end wrapper -->
 
 <script>
-const API = 'http://127.0.0.1:5000';
+const API = 'http://127.0.0.1:9038';
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 function showView(id) {
@@ -518,7 +518,7 @@ async function handleLogin() {
       });
       setTimeout(() => {
         if (data.position === 'IT Admin') {
-          window.location.href = 'admin_page.html?' + params.toString();
+          window.location.href = 'operation_panel.html?' + params.toString();
         } else {
           window.location.href = 'operation_panel.html?' + params.toString();
         }

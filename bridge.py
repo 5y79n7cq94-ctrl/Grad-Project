@@ -1,12 +1,13 @@
-import os, sys, json, uvicorn, re
+import os, sys, json, uvicorn, re, hashlib, sqlite3
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from collections import defaultdict
-from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates
+from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH
 from task_manager import run_task_master
 import threading
+from datetime import datetime, timezone
 
 # ✏️ CHANGED: 防止重複爬蟲 thread
 # key = operator, value = True 表示而家正在爬緊
@@ -354,6 +355,108 @@ def dates_overlap(db_date_str, user_start, user_end):
             continue
     return False
 
+def _query_events_deduped(keyword: str, operators: list, categories: list,
+                           from_date: str = "", to_date: str = "") -> "pd.DataFrame":
+    """
+    查詢 events_deduped table（新 schema：content-based）。
+    返回每個 event group 嘅代表帖文 + source_post_ids。
+    """
+    import sqlite3 as _sq
+    try:
+        from db_manager import DB_PATH as _DB_PATH
+    except Exception:
+        _DB_PATH = os.getenv("DB_PATH", "macau_analytics.db")
+    db_path = _DB_PATH
+    try:
+        conn = _sq.connect(db_path)
+        cur  = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM events_deduped")
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return pd.DataFrame()
+        # 確認係新 schema（有 content 欄位）
+        cur.execute("PRAGMA table_info(events_deduped)")
+        cols = {r[1] for r in cur.fetchall()}
+        if 'content' not in cols:
+            print("⚠️  events_deduped 係舊 schema，請重跑 process_events.py")
+            conn.close()
+            return pd.DataFrame()
+    except Exception:
+        try: conn.close()
+        except: pass
+        return pd.DataFrame()
+
+    try:
+        conditions = []
+        params     = []
+
+        # ── Keyword 過濾 ──
+        if keyword and keyword.strip():
+            kw_clauses = []
+            for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]:
+                try:
+                    from trad_simp import expand_variants
+                    variants = expand_variants(single_kw)
+                except ImportError:
+                    variants = [single_kw]
+                per_kw = " OR ".join(["content LIKE ?"] * len(variants))
+                kw_clauses.append(f"({per_kw})")
+                for v in variants:
+                    params += [f"%{v}%"]
+            conditions.append("(" + " OR ".join(kw_clauses) + ")")
+
+        # ── Operator 過濾 ──
+        if operators:
+            ops_ph = ",".join("?" * len(operators))
+            conditions.append(f"operator IN ({ops_ph})")
+            params += operators
+
+        # ── 日期過濾 ──
+        if from_date:
+            conditions.append("(event_date >= ? OR event_date IS NULL OR event_date = '')")
+            params.append(from_date[:10])
+        if to_date:
+            conditions.append("(event_date <= ? OR event_date IS NULL OR event_date = '')")
+            params.append(to_date[:10])
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        query = f"""
+            SELECT
+                event_id        AS id,
+                platform,
+                operator,
+                content         AS description,
+                event_date,
+                category,
+                sub_type,
+                published_at,
+                NULL            AS raw_json,
+                NULL            AS media_text,
+                source_post_ids,
+                source_count,
+                ai_name,
+                ai_description,
+                ai_category,
+                ai_location,
+                ai_processed
+            FROM events_deduped
+            {where}
+            ORDER BY
+                CASE WHEN event_date IS NOT NULL AND event_date != '' THEN 0 ELSE 1 END,
+                event_date ASC
+            LIMIT 500
+        """
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        print(f"   └─ events_deduped: {len(df)} groups (kw='{keyword}', ops={operators})")
+        return df
+    except Exception as e:
+        print(f"⚠️  events_deduped query 失敗: {e}")
+        try: conn.close()
+        except: pass
+        return pd.DataFrame()
+
+
 @app.get("/api/v2/analyze")
 async def analyze(keyword: str, operators: str = "", category: str = "", from_date: str = "", to_date: str = ""):
     print(f"\n🕵️ --- 任務開始: '{keyword}' (類別: {category}) ---")
@@ -363,12 +466,17 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                   ["sands", "galaxy", "wynn", "mgm", "melco", "sjm"]
     target_cats = [c.strip() for c in category.split(",") if c.strip()] if category else [""]
 
-    # 2. DB 查詢（db_manager 已處理 category keyword 過濾）
+    # 2. DB 查詢：優先用 events_deduped（已去重），fallback 到原始 posts_*
     print("🔎 正在從資料庫檢索數據...")
-    if target_cats != [""]:
-        dfs = [query_db_by_filters(keyword, target_ops, cat, from_date=from_date) for cat in target_cats]
-        df  = pd.concat(dfs).drop_duplicates(subset=['id']).reset_index(drop=True) if dfs else pd.DataFrame()
+
+    _deduped_df = _query_events_deduped(keyword, target_ops, target_cats, from_date, to_date)
+    _use_deduped = not _deduped_df.empty
+    if _use_deduped:
+        print(f"✅ 用 events_deduped（{len(_deduped_df)} 條已去重 events）")
+        df = _deduped_df
     else:
+        print("⚠️  events_deduped 無結果，fallback 到原始 posts_*")
+        # ── 唔再用 category filter 查 DB，全部帖文返回，由 AI 自己分 category ──
         df = query_db_by_filters(keyword, target_ops, "", from_date=from_date)
 
     # 3. 爬蟲觸發
@@ -441,8 +549,18 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
 
     # 5. 逐運營商處理
     all_summaries = {}
-    # ✏️ NEW: 跨 operator 已提取活動名稱集合，避免重複（如 BLACKPINK 同時出現喺 Sands + 政府）
-    globally_extracted_names: set = set()
+    # ✏️ NEW: 跨 operator 已提取活動名稱 → {normalized_name: activity_dict}
+    # 改用 dict 而唔係 set，令去重時可以 merge source_post_ids 而唔係直接丟棄
+    # key 用 normalized name，避免全形/半形/標點差異導致同一活動比對失敗
+    globally_extracted: dict = {}
+
+    def _norm_name(s: str) -> str:
+        """正規化活動名稱用於比對：去標點、全形轉半形、轉小寫"""
+        import unicodedata as _ud
+        s = _ud.normalize('NFKC', s or '')  # 全形→半形
+        s = re.sub(r'[\s\-—–·・•]+', '', s)  # 去空格、各種破折號
+        s = re.sub(r'[^\w\u4e00-\u9fff]', '', s)  # 去其他標點
+        return s.lower().strip()
     for op_key in target_ops:
         if op_key not in OP_KEYWORDS:
             continue
@@ -556,138 +674,206 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                 "source":      "government",
             })
 
-        # 社媒：每個獨立帖文只送 DeepSeek 一次（唔論 match 幾多個 category）
-        # DeepSeek 自己識別帖文入面每個活動屬於咩 category
+        # 社媒：聚類後每組一齊喂 DeepSeek，AI 自己去重 + 定 category
         if social_posts:
-            # 去重：同一 post id 只保留一次，但記錄佢 match 到哪些 categories
-            post_cats = defaultdict(set)  # post_id -> set of (cat, sub)
-            post_obj  = {}                # post_id -> post dict
+            # ── 收集所有 social post ──
+            post_obj = {}
             for c in social_posts:
                 pid = c["post"].get("id") or id(c["post"])
-                post_cats[pid].add((c["category"], c["sub_type"]))
                 post_obj[pid] = c["post"]
 
-            # 按優先級排序（有日期且在範圍內的排前）
-            def post_priority(pid):
-                p  = post_obj[pid]
-                ed = str(p.get("event_date") or "")
-                if ed and ed not in ("nan", "None", "NaN", ""):
+            # ── 如果係 events_deduped 來源，用 source_post_ids 重建 groups ──
+            # events_deduped 每條 row 已經係一個 group，source_post_ids 記錄所有來源帖文
+            if _use_deduped:
+                # 每條 deduped row = 一個 group
+                # source_post_ids 係 JSON array，但實際帖文 content 已經係 description 欄位
+                groups = []
+                for c in social_posts:
+                    p = c["post"]
+                    pid = p.get("id")
+                    # source_post_ids 係 JSON string
                     try:
-                        parts = ed.split(",")[0].strip().split("~")
-                        ev_s  = pd.to_datetime(parts[0].strip())
-                        ev_e  = pd.to_datetime(parts[-1].strip())
-                        if from_date and to_date:
-                            if ev_s <= pd.to_datetime(to_date) and ev_e >= pd.to_datetime(from_date):
-                                return 0
-                            return 2
-                    except:
-                        pass
-                return 1
-            sorted_pids = sorted(post_cats.keys(), key=post_priority)[:20]
+                        src_ids = json.loads(p.get("source_post_ids") or "[]")
+                    except Exception:
+                        src_ids = [pid] if pid else []
+                    groups.append([pid] if src_ids == [] else src_ids)
+                    # 確保 post_obj 有呢個 pid 嘅 content
+                    post_obj[pid] = p
+                print(f"   📦 {op_key}: {len(groups)} groups (from events_deduped)")
+            else:
+                # ── Fallback：用內容相似度聚類 ──
+                from difflib import SequenceMatcher as _SM
 
-            # 每個帖文各自送 DeepSeek 一次
-            for pid in sorted_pids:
-                p     = post_obj[pid]
-                cats  = post_cats[pid]   # set of (cat, sub) this post matched
-                title = (p.get("title") or "").strip()
-                desc  = (p.get("description") or "").strip()
-                if len(desc) < 30 and p.get("raw_json"):
-                    try:
-                        raw  = json.loads(p["raw_json"])
-                        desc = (raw.get("desc") or raw.get("content") or raw.get("shortDesc") or desc).strip()
-                    except:
-                        pass
-                if not title and not desc:
+                def _post_text(p):
+                    t = (p.get("description") or p.get("title") or "")
+                    return re.sub(r'\s+', '', t).lower()[:150]
+
+                def _sim(a, b):
+                    return _SM(None, _post_text(a), _post_text(b)).ratio()
+
+                sorted_pids = sorted(post_obj.keys(), key=lambda pid: (
+                    0 if str(post_obj[pid].get("event_date") or "").strip()
+                    not in ("", "nan", "None", "NaN") else 1
+                ))
+
+                groups     = []
+                assigned   = set()
+                for pid in sorted_pids:
+                    if pid in assigned:
+                        continue
+                    group = [pid]
+                    assigned.add(pid)
+                    for other_pid in sorted_pids:
+                        if other_pid in assigned or len(group) >= 5:
+                            continue
+                        if _sim(post_obj[pid], post_obj[other_pid]) >= 0.55:
+                            group.append(other_pid)
+                            assigned.add(other_pid)
+                    groups.append(group)
+                print(f"   📦 {op_key}: {len(sorted_pids)} 條帖文 → {len(groups)} 組")
+
+            # ── CAT_RULES keyword hint（供 AI 判斷 category 用）──
+            CAT_HINTS = {
+                "concert":       ["演唱會","音樂會","CONCERT","FANMEETING","見面會","巡演","SHOWCASE","音樂劇","歌劇","話劇"],
+                "sport":         ["馬拉松","長跑","MARATHON","乒乓球","羽毛球","籃球","足球","網球","UFC","格鬥","球賽","賽事"],
+                "crossover":     ["聯名","快閃","POP-UP","POPUP","限定","POPMART","泡泡瑪特","主題展覽"],
+                "experience":    ["沉浸式","VR","體驗","主題樂園","水舞間","常駐","打卡","樂園"],
+                "exhibition":    ["展覽","展出","藝術展","EXPO","博物館","特展","畫展"],
+                "food":          ["美食","餐廳","晚餐","自助餐","下午茶","咖啡","火鍋","晚宴","米其林","酒吧","調酒"],
+                "accommodation": ["酒店","住宿","套房","度假","客房","早餐"],
+                "shopping":      ["購物","折扣","優惠券","紀念品","手信","旗艦店"],
+                "gaming":        ["博彩","賭場","CASINO","積分","貴賓"],
+            }
+            cat_hint_str = "\n".join(
+                f"- {cat}：{' / '.join(kws[:8])}"
+                for cat, kws in CAT_HINTS.items()
+            )
+
+            # ── 逐組喂 DeepSeek ──
+            for group_pids in groups:
+                # 組合呢組嘅所有帖文內容
+                snippets = []
+                group_post_ids = []
+                for i, pid in enumerate(group_pids):
+                    p = post_obj.get(pid)
+                    if p is None:
+                        # source_post_ids 可能包含唔喺呢個 operator 嘅帖文，skip
+                        group_post_ids.append(pid)  # 仍然記錄 ID 供 source_posts 用
+                        continue
+                    title = (p.get("title") or "").strip()
+                    desc  = (p.get("description") or "").strip()
+                    if len(desc) < 30 and p.get("raw_json"):
+                        try:
+                            raw  = json.loads(p["raw_json"])
+                            desc = (raw.get("desc") or raw.get("content") or raw.get("shortDesc") or desc).strip()
+                        except:
+                            pass
+                    if not title and not desc:
+                        continue
+
+                    post_date = ""
+                    if p.get("raw_json"):
+                        try:
+                            raw = json.loads(p["raw_json"])
+                            dt  = raw.get("create_date_time") or raw.get("time") or ""
+                            if dt:
+                                post_date = f"（發佈：{str(dt)[:10]}）"
+                        except:
+                            pass
+
+                    media_text = (p.get("media_text") or "").strip()
+                    media_text = "" if media_text in ("（無可分析內容）", "（圖片無文字）") else media_text
+
+                    snippet = f"【帖文{i+1}】{post_date}標題: {title}\n內容: {desc[:600] or '(空)'}"
+                    if media_text:
+                        snippet += f"\n圖片OCR: {media_text[:400]}"
+                    snippets.append(snippet)
+                    group_post_ids.append(pid)
+
+                if not snippets:
                     continue
 
-                post_date = ""
-                if p.get("raw_json"):
-                    try:
-                        raw = json.loads(p["raw_json"])
-                        dt  = raw.get("create_date_time") or raw.get("time") or ""
-                        if dt:
-                            post_date = f"（帖文發佈：{str(dt)[:10]}）"
-                    except:
-                        pass
-
-                # media_text：過濾無效標記，無論 desc 長短都加入，由 prompt 指示 AI 自己判斷
-                media_text = (p.get("media_text") or "").strip()
-                media_text = "" if media_text in ("（無可分析內容）", "（圖片無文字）") else media_text
-
-                snippet = f"【帖文】{post_date}標題: {title}\n內容: {desc[:800] or '(空)'}"
-                if media_text:
-                    snippet += f"\n圖片OCR文字: {media_text[:800]}"
-
-                all_seen_names = set(a["name"] for a in activities if a.get("source") == "government") | globally_extracted_names
-                seen_hint  = "、".join(sorted(all_seen_names)) if all_seen_names else "（無）"
+                all_seen_names = set(a["name"] for a in activities) | \
+                                 {v["name"] for v in globally_extracted.values() if v.get("name")}
+                seen_hint = "、".join(sorted(all_seen_names)) if all_seen_names else "（無）"
                 date_hint  = (
-                    f"參考資訊：用戶查詢日期範圍為 {from_date} 至 {to_date}。"
-                    f"活動日期必須從帖文原文中明確提取，嚴禁根據查詢範圍推算、估計或捏造日期。"
-                    f"若帖文冇明確提及活動具體日期，date 欄位必須填 null。"
+                    f"用戶查詢日期範圍：{from_date} 至 {to_date}。"
+                    f"活動日期必須從帖文原文明確提取，嚴禁推算或捏造，冇明確日期填 null。"
                 ) if from_date and to_date else ""
 
-                # 列出呢個帖文 match 到嘅所有 category，供 DeepSeek 參考
-                cat_list = "、".join(sorted({sub or cat for cat, sub in cats}))
+                prompt = f"""你係澳門活動資訊整合助手。以下係來自 {op_key} 嘅 {len(snippets)} 條相關帖文。{date_hint}
 
-                prompt = f"""你係澳門活動資訊整合助手。以下係來自社交媒體關於澳門{op_key}嘅帖文。{date_hint}
+請識別所有獨立活動，相似或重複嘅活動只算一個。
 
-帖文可能同時包含多個獨立活動，涉及以下類別：{cat_list}
+Category 判斷規則：
+{cat_hint_str}
+- 唔符合以上任何一個 → category 填 "other"
 
-你的任務：
-1. 識別帖文中每一個獨立【演出/活動】，唔要提取周邊優惠
-2. 相同活動只算一個（去重）
-3. 以下活動已提取，唔需要重複：{seen_hint}
-4. 每個獨立活動輸出一個 JSON object：
-   - "name": 活動名稱（簡潔，20字以內）
+任務：
+1. 睇晒所有帖文，識別每一個獨立活動（唔同帖文講同一活動只算一個）
+2. 以下活動已提取，**概念上相同嘅唔需要重複**（即使名稱唔同、語言唔同、描述角度唔同，只要係同一個活動就唔輸出）：
+   {seen_hint}
+3. 每個活動輸出一個 JSON object：
+   - "name": 活動名稱（簡潔，20字以內，統一用繁體中文，英文活動名可保留英文）
    - "description": 重點描述，50-80字，繁體中文
-   - "date": 活動日期，必須係帖文原文中明確出現嘅日期（格式 YYYY-MM-DD 或 YYYY-MM-DD~YYYY-MM-DD）。冇明確日期填 null，嚴禁猜測。
+   - "date": 帖文原文明確出現嘅日期（YYYY-MM-DD 或 YYYY-MM-DD~YYYY-MM-DD），冇就填 null
    - "location": 地點（冇就填 null）
-   - "category": 活動類別，從以下選擇：concert、sport、crossover、experience、exhibition、food、accommodation、shopping、gaming
-5. 只返回 JSON array，唔需要任何前言
-6. 「圖片OCR文字」係自動提取，可能含雜音。只有當中同時出現明確活動名稱同日期先參考，否則忽略。
+   - "category": 根據上面規則判斷
+   - "source_indices": 呢個活動主要來自第幾條帖文（array，例如 [1,2]）
+4. 只返回 JSON array，唔需要任何前言
+5. 如果帖文只係recap已過去嘅活動（例如「圓滿落幕」「感謝到場」），唔需要提取
 
 帖文內容：
-{snippet}
+{"=" * 40}
+{chr(10).join(snippets)}
+{"=" * 40}
 
 直接輸出 JSON array："""
 
                 try:
-                    resp      = client.chat.completions.create(
+                    resp     = client.chat.completions.create(
                         model="deepseek-chat",
                         messages=[{"role": "user", "content": prompt}],
-                        max_tokens=800,
+                        max_tokens=1200,
                     )
-                    raw_resp  = re.sub(r'^```[a-z]*\n?', '', (resp.choices[0].message.content or "").strip()).rstrip('`').strip()
+                    raw_resp = re.sub(r'^```[a-z]*\n?', '', (resp.choices[0].message.content or "").strip()).rstrip('`').strip()
                     extracted = json.loads(raw_resp)
-                    print(f"✅ DeepSeek 識別 {len(extracted)} 個獨立活動（帖文 {pid}）")
+                    print(f"✅ DeepSeek 識別 {len(extracted)} 個活動（{len(snippets)} 條帖文）")
                 except Exception as e:
                     print(f"⚠️ DeepSeek 出錯: {e}")
-                    extracted = [{"name": title[:40] or f"{op_key}活動",
-                                  "description": make_description(p),
-                                  "date": None, "location": None, "category": None}]
+                    p0 = next((post_obj.get(gp) for gp in group_pids if post_obj.get(gp)), {})
+                    extracted = [{"name": (p0.get("title") or "")[:40] or f"{op_key}活動",
+                                  "description": make_description(p0),
+                                  "date": None, "location": None,
+                                  "category": None, "source_indices": [1]}]
 
                 for item in extracted:
                     item_name = (item.get("name") or "").strip()
                     item_desc = (item.get("description") or "").strip()
                     item_cat  = (item.get("category") or "").strip().lower()
-                    # 用 DeepSeek 返回嘅 category，fallback 到帖文第一個 match category
-                    cat = item_cat if item_cat else next(iter(cats))[1] or next(iter(cats))[0]
-                    sub = None
-                    # concert/sport/crossover 係 entertainment 嘅 sub_type
-                    if cat in ("concert", "sport", "crossover"):
-                        sub, cat_out = cat, "entertainment"
-                    else:
-                        sub, cat_out = None, cat
+                    item_date = (item.get("date") or "").strip()
 
-                    # ✏️ 強制 description 轉繁體，避免 DeepSeek 返回簡體
+                    # Drop "other" 或空 category
+                    if item_cat in ("other", ""):
+                        print(f"⏭️ category=other，drop: {item_name}")
+                        continue
+
+                    # 合法 category 清單
+                    VALID_CATS = {"concert","sport","crossover","experience",
+                                  "exhibition","food","accommodation","shopping","gaming"}
+                    if item_cat not in VALID_CATS:
+                        print(f"⏭️ 非法 category '{item_cat}'，drop: {item_name}")
+                        continue
+
+                    # 繁體化
                     try:
                         from trad_simp import to_trad as _to_trad
                         item_desc = _to_trad(item_desc)
                         item_name = _to_trad(item_name)
-                    except Exception:
+                    except:
                         pass
 
-                    # keyword 相關性後過濾（多關鍵字 OR）
+                    # keyword 相關性後過濾
                     if keyword and keyword.strip():
                         item_text = (item_name + " " + item_desc).upper()
                         matched = False
@@ -700,9 +886,14 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                             print(f"⏭️ keyword 過濾：'{item_name}' 與關鍵字「{keyword}」無關，跳過")
                             continue
 
-                    item_date = (item.get("date") or "").strip()
+                    # concert/sport/crossover → entertainment sub_type
+                    if item_cat in ("concert", "sport", "crossover"):
+                        sub, cat_out = item_cat, "entertainment"
+                    else:
+                        sub, cat_out = None, item_cat
 
                     # 日期 hallucination 防護
+                    all_snippets_text = "\n".join(snippets)
                     if item_date and item_date not in ("N/A", "null", "None", ""):
                         def _date_in_text(d, txt):
                             d = d.split("~")[0].strip()[:10]
@@ -710,91 +901,106 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                                 return True
                             try:
                                 import datetime as _dt
-                                obj  = _dt.date.fromisoformat(d)
+                                obj = _dt.date.fromisoformat(d)
                                 m, day = obj.month, obj.day
                                 if re.search(rf'{m}月{day}[日号]?', txt): return True
-                                if day == 1 and re.search(rf'(?<!\d){m}月(?!\d)', txt): return True
                                 if re.search(rf'(?<!\d){m}[./]{day:02d}(?!\d)', txt): return True
                                 EN_MON = ['','Jan','Feb','Mar','Apr','May','Jun',
                                           'Jul','Aug','Sep','Oct','Nov','Dec']
                                 if re.search(rf'{EN_MON[m]}[\s.]*{day}', txt, re.IGNORECASE): return True
-                            except Exception:
+                            except:
                                 pass
                             return False
-                        if not _date_in_text(item_date, snippet):
-                            print(f"⚠️ 日期 '{item_date}' 唔見於帖文原文，reset 做 null（防止 hallucination）")
+                        if not _date_in_text(item_date, all_snippets_text):
+                            print(f"⚠️ 日期 '{item_date}' 唔見於帖文，reset null")
                             item_date = ""
 
-                    # ✏️ DeepSeek 冇日期時，fallback 用 DB 已解析嘅 event_date
+                    # fallback 用 DB event_date
                     if not item_date or item_date in ("N/A", "null", "None", ""):
-                        db_date = str(p.get("event_date") or "").strip()
-                        if db_date and db_date not in ("nan", "None", "NaN", ""):
-                            item_date = db_date  # 保留完整多段日期，前端 formatEventDate 負責顯示
-                            print(f"📅 '{item_name}' 用 DB event_date 補填: {item_date}")
+                        for gp in group_pids:
+                            gp_post = post_obj.get(gp)
+                            if gp_post is None:
+                                continue
+                            db_date = str(gp_post.get("event_date") or "").strip()
+                            if db_date and db_date not in ("nan", "None", "NaN", ""):
+                                item_date = db_date
+                                print(f"📅 '{item_name}' 用 DB event_date: {item_date}")
+                                break
 
-                    # 日期範圍過濾（用 dates_overlap 正確處理多段逗號日期）
+                    # 日期範圍過濾
                     if from_date and to_date:
                         if item_date and item_date not in ("N/A", "null", "None", ""):
                             if not dates_overlap(item_date, pd.to_datetime(from_date), pd.to_datetime(to_date)):
                                 print(f"⏭️ 日期範圍外，跳過: {item_name} ({item_date})")
                                 continue
-                        # 仍然冇日期：用帖文發佈日期判斷是否「常駐/進行中」活動
-                        # 如果帖文喺查詢範圍前後 90 日內發佈，視為進行中，保留
                         else:
                             try:
-                                rj = json.loads(p.get("raw_json") or "{}")
+                                _p0 = next((post_obj.get(gp) for gp in group_pids if post_obj.get(gp)), {})
+                                rj = json.loads((_p0.get("raw_json") or "{}"))
                                 pub_str = rj.get("create_date_time") or rj.get("time") or ""
                                 if pub_str:
-                                    pub_dt    = pd.to_datetime(str(pub_str)[:10])
-                                    range_start = pd.to_datetime(from_date)
-                                    range_end   = pd.to_datetime(to_date)
-                                    window_start = range_start - pd.Timedelta(days=30)
-                                    window_end   = range_end   + pd.Timedelta(days=30)
-                                    if window_start <= pub_dt <= window_end:
-                                        print(f"📌 '{item_name}' 冇日期但帖文發佈於查詢範圍附近（{str(pub_dt)[:10]}），視為常駐活動保留")
-                                    else:
-                                        print(f"⏭️ '{item_name}' 冇日期且帖文太舊（{str(pub_dt)[:10]}），跳過")
+                                    pub_dt = pd.to_datetime(str(pub_str)[:10])
+                                    window_start = pd.to_datetime(from_date) - pd.Timedelta(days=30)
+                                    window_end   = pd.to_datetime(to_date)   + pd.Timedelta(days=30)
+                                    if not (window_start <= pub_dt <= window_end):
+                                        print(f"⏭️ '{item_name}' 帖文太舊，跳過")
                                         continue
-                                else:
-                                    print(f"📌 '{item_name}' 冇日期亦冇發佈時間，保留（可能係政府/常駐資料）")
-                            except Exception:
-                                print(f"📌 '{item_name}' 冇日期，parse 失敗，保留")
+                            except:
+                                pass
 
-                    # 跨 operator dedup
-                    if item_name and item_name in globally_extracted_names:
-                        print(f"⏭️ 跨 operator 重複，跳過: {item_name}")
+                    # 跨 operator dedup：merge source_post_ids
+                    _norm_key = _norm_name(item_name)
+                    if item_name and _norm_key in globally_extracted:
+                        existing = globally_extracted[_norm_key]
+                        for gp in group_post_ids:
+                            if gp not in existing.get("source_post_ids", []):
+                                existing.setdefault("source_post_ids", []).append(gp)
+                        print(f"🔀 跨 operator 重複，merge: {item_name}")
                         continue
 
-                    activities.append({
-                        "name":        item_name,
-                        "description": item_desc or "暫無描述",
-                        "date":        _resolve_overlapping_dates(item_date, post_text=f"{title}\n{desc}", activity_name=item_name),
-                        "location":    item.get("location") or "",
-                        "category":    cat_out,
-                        "sub_type":    sub,
-                    })
+                    new_act = {
+                        "name":            item_name,
+                        "description":     item_desc or "暫無描述",
+                        "date":            _resolve_overlapping_dates(item_date, post_text=all_snippets_text, activity_name=item_name),
+                        "location":        item.get("location") or "",
+                        "category":        cat_out,
+                        "sub_type":        sub,
+                        "source_post_ids": group_post_ids,
+                    }
+                    activities.append(new_act)
                     if item_name:
-                        globally_extracted_names.add(item_name)
+                        globally_extracted[_norm_name(item_name)] = new_act
 
         all_summaries[op_key] = activities
-        # ✏️ NEW: 將呢個 operator 所有活動名稱（包括 gov cards）加入全局已見集合
         for act in activities:
             n = act.get("name", "").strip()
-            if n:
-                globally_extracted_names.add(n)
+            nk = _norm_name(n)
+            if n and nk not in globally_extracted:
+                globally_extracted[nk] = act
         print(f"✅ {op_key}: {len(activities)} 張 card (gov={len(gov_posts)}, social={len(activities)-len(gov_posts)})")
 
     # ── 重組：by category，每個 activity 附上 operator 資訊 ────────
-    # 同時保留 operator_summaries 向下兼容
+    # 出口 category filter：只保留用家要嘅 category
+    ent_subtypes_out = {"concert", "sport", "crossover"}
     cat_summaries = defaultdict(list)
-    # ✏️ FIX: 跨 category 去重 — 同一活動名唔應喺多個 category 出現
     _cat_seen_names: set = set()
     for op_key, activities in all_summaries.items():
         for act in activities:
-            act_with_op = dict(act, operator=op_key)  # 每個活動加入 operator 欄位
-            # 用 sub_type 優先，否則用 category
-            cat_key = act.get('sub_type') or act.get('category') or 'experience'
+            act_with_op = dict(act, operator=op_key)
+            cat_key  = act.get('sub_type') or act.get('category') or 'experience'
             act_name = (act.get('name') or '').strip()
+
+            # ── 出口 category filter ──
+            if target_cats and target_cats != [""]:
+                wanted = any(
+                    (tc in ent_subtypes_out and cat_key == tc) or
+                    (tc not in ent_subtypes_out and (cat_key == tc or act.get('category') == tc))
+                    for tc in target_cats
+                )
+                if not wanted:
+                    print(f"⏭️ 出口 filter：{act_name} (category={cat_key}) 唔係用家要嘅 {target_cats}")
+                    continue
+
             dedup_key = f"{act_name}|{op_key}"
             if act_name and dedup_key in _cat_seen_names:
                 print(f"⏭️ 跨 category 重複，跳過: {act_name} ({op_key})")
@@ -803,10 +1009,55 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                 _cat_seen_names.add(dedup_key)
             cat_summaries[cat_key].append(act_with_op)
 
+    # ── 為每張 card 補充 source_posts 詳情 ────────────────
+    all_source_ids = set()
+    for acts in cat_summaries.values():
+        for act in acts:
+            for sid in (act.get("source_post_ids") or []):
+                all_source_ids.add(sid)
+
+    post_details = {}
+    if all_source_ids:
+        try:
+            import sqlite3 as _sq2
+            from db_manager import DB_PATH as _SRC_DB_PATH
+            _conn = _sq2.connect(_SRC_DB_PATH)
+            _cur  = _conn.cursor()
+            for table, platform_name in [
+                ("posts_xhs", "xhs"), ("posts_ig", "ig"),
+                ("posts_fb", "fb"),   ("posts_weibo", "weibo"),
+            ]:
+                try:
+                    placeholders = ",".join("?" * len(all_source_ids))
+                    _cur.execute(f"""
+                        SELECT post_id, published_at, post_url,
+                               substr(content, 1, 60) AS title_preview
+                        FROM {table}
+                        WHERE post_id IN ({placeholders})
+                    """, list(all_source_ids))
+                    for pid, pub_at, post_url, title_preview in _cur.fetchall():
+                        post_details[pid] = {
+                            "post_id":      pid,
+                            "platform":     platform_name,
+                            "url":          post_url or "",
+                            "title":        title_preview or "",
+                            "published_at": str(pub_at or "")[:10],
+                        }
+                except _sq2.OperationalError:
+                    pass
+            _conn.close()
+        except Exception as e:
+            print(f"⚠️ source_posts 補充失敗（唔影響主結果）: {e}")
+
+    for acts in cat_summaries.values():
+        for act in acts:
+            ids = act.get("source_post_ids") or []
+            act["source_posts"] = [post_details[i] for i in ids if i in post_details]
+
     return {
-        "status": "success",
-        "operator_summaries": all_summaries,       # 向下兼容
-        "category_summaries": dict(cat_summaries), # 新格式：by category
+        "status":             "success",
+        "operator_summaries": all_summaries,
+        "category_summaries": dict(cat_summaries),
     }
 
 @app.post("/api/hot-themes")
@@ -863,6 +1114,310 @@ async def hot_themes(payload: dict):
         print(f"⚠️ hot_themes 出錯: {e}")
         return {"themes": []}
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTH & USER MANAGEMENT ROUTES  (merged from server.py)
+# All user data is stored in the users table inside macau_analytics.db
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def _get_auth_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+def _ensure_users_table():
+    conn = _get_auth_conn()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            "User ID"       INTEGER PRIMARY KEY AUTOINCREMENT,
+            "First Name"    TEXT    NOT NULL,
+            "Last Name"     TEXT    NOT NULL,
+            "Email Address" TEXT    NOT NULL UNIQUE,
+            "Password"      TEXT    NOT NULL,
+            "Date Joined"   TEXT    NOT NULL,
+            "Department"    TEXT    NOT NULL,
+            "Position"      TEXT    NOT NULL,
+            "Role"          TEXT    NOT NULL DEFAULT \'user\'
+        )
+    ''')
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN \"Role\" TEXT NOT NULL DEFAULT 'user'")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+_ensure_users_table()
+
+
+def _require_admin(data: dict):
+    """Return (admin_row, None) or (None, error_dict)."""
+    admin_email = (data.get("admin_email") or "").strip().lower()
+    admin_token = (data.get("admin_token") or "")
+    if not admin_email or not admin_token:
+        return None, {"success": False, "message": "Admin credentials required."}
+    conn = _get_auth_conn()
+    try:
+        admin = conn.execute(
+            'SELECT * FROM users WHERE "Email Address"=? AND "Password"=?',
+            (admin_email, admin_token)
+        ).fetchone()
+        if not admin:
+            return None, {"success": False, "message": "Invalid admin credentials."}
+        if admin["Position"] != "IT Admin":
+            return None, {"success": False, "message": "Access denied. IT Admin only."}
+        return admin, None
+    finally:
+        conn.close()
+
+
+@app.post("/register")
+async def auth_register(request: Request):
+    data     = await request.json()
+    first    = (data.get("first_name") or "").strip()
+    last     = (data.get("last_name")  or "").strip()
+    email    = (data.get("email")      or "").strip().lower()
+    dept     = (data.get("department") or "").strip()
+    position = (data.get("position")   or "").strip()
+    password = (data.get("password")   or "")
+    role     = (data.get("role")       or "user").strip().lower()
+    if role not in ("user", "admin"):
+        role = "user"
+    if not all([first, last, email, dept, position, password]):
+        return {"success": False, "message": "All fields are required."}
+    conn = _get_auth_conn()
+    try:
+        date_joined = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            'INSERT INTO users ("First Name","Last Name","Email Address","Password","Date Joined","Department","Position","Role") VALUES (?,?,?,?,?,?,?,?)',
+            (first, last, email, _hash_password(password), date_joined, dept, position, role)
+        )
+        conn.commit()
+        uid = conn.execute('SELECT "User ID" FROM users WHERE "Email Address"=?', (email,)).fetchone()["User ID"]
+        return {"success": True, "user_id": str(uid).zfill(4)}
+    except sqlite3.IntegrityError:
+        return {"success": False, "message": "An account with that email already exists."}
+    finally:
+        conn.close()
+
+
+@app.post("/login")
+async def auth_login(request: Request):
+    data     = await request.json()
+    email    = (data.get("email")    or "").strip().lower()
+    password = (data.get("password") or "")
+    if not email or not password:
+        return {"success": False, "message": "Please enter your email and password."}
+    conn = _get_auth_conn()
+    try:
+        user = conn.execute(
+            'SELECT * FROM users WHERE "Email Address"=? AND "Password"=?',
+            (email, _hash_password(password))
+        ).fetchone()
+        if not user:
+            return {"success": False, "message": "Invalid email or password."}
+        return {
+            "success"   : True,
+            "user_id"   : str(user["User ID"]).zfill(4),
+            "first_name": user["First Name"],
+            "last_name" : user["Last Name"],
+            "department": user["Department"],
+            "position"  : user["Position"],
+            "role"      : user["Role"] if "Role" in user.keys() else "user",
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/change-password")
+async def auth_change_password(request: Request):
+    data         = await request.json()
+    email        = (data.get("email")        or "").strip().lower()
+    old_password = (data.get("old_password") or "")
+    new_password = (data.get("new_password") or "")
+    if not all([email, old_password, new_password]):
+        return {"success": False, "message": "All fields are required."}
+    if len(new_password) < 8:
+        return {"success": False, "message": "New password must be at least 8 characters."}
+    conn = _get_auth_conn()
+    try:
+        user = conn.execute(
+            'SELECT * FROM users WHERE "Email Address"=? AND "Password"=?',
+            (email, _hash_password(old_password))
+        ).fetchone()
+        if not user:
+            return {"success": False, "message": "Current password is incorrect."}
+        conn.execute('UPDATE users SET "Password"=? WHERE "Email Address"=?',
+                     (_hash_password(new_password), email))
+        conn.commit()
+        return {"success": True, "message": "Password updated successfully."}
+    finally:
+        conn.close()
+
+
+@app.post("/check-email")
+async def auth_check_email(request: Request):
+    data  = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    conn  = _get_auth_conn()
+    try:
+        user = conn.execute('SELECT "User ID" FROM users WHERE "Email Address"=?', (email,)).fetchone()
+        return {"exists": user is not None}
+    finally:
+        conn.close()
+
+
+@app.post("/reset-password")
+async def auth_reset_password(request: Request):
+    data         = await request.json()
+    email        = (data.get("email")        or "").strip().lower()
+    new_password = (data.get("new_password") or "")
+    if not email or not new_password:
+        return {"success": False, "message": "All fields are required."}
+    if len(new_password) < 8:
+        return {"success": False, "message": "Password must be at least 8 characters."}
+    conn = _get_auth_conn()
+    try:
+        result = conn.execute('UPDATE users SET "Password"=? WHERE "Email Address"=?',
+                              (_hash_password(new_password), email))
+        conn.commit()
+        if result.rowcount == 0:
+            return {"success": False, "message": "Email not found."}
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+# ── Admin endpoints ───────────────────────────────────────────────────────────
+
+@app.get("/admin/users")
+async def admin_get_users(admin_email: str = "", admin_token: str = ""):
+    _, err = _require_admin({"admin_email": admin_email, "admin_token": admin_token})
+    if err:
+        return err
+    conn = _get_auth_conn()
+    try:
+        rows = conn.execute(
+            'SELECT "User ID","First Name","Last Name","Email Address","Date Joined","Department","Position","Role" FROM users ORDER BY "User ID"'
+        ).fetchall()
+        return {"success": True, "users": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@app.post("/admin/users")
+async def admin_create_user(request: Request):
+    data = await request.json()
+    _, err = _require_admin(data)
+    if err:
+        return err
+    first    = (data.get("first_name") or "").strip()
+    last     = (data.get("last_name")  or "").strip()
+    email    = (data.get("email")      or "").strip().lower()
+    dept     = (data.get("department") or "").strip()
+    position = (data.get("position")   or "").strip()
+    password = (data.get("password")   or "")
+    role     = (data.get("role")       or "user").strip().lower()
+    if role not in ("user", "admin"):
+        role = "user"
+    if not all([first, last, email, dept, position, password]):
+        return {"success": False, "message": "All fields are required."}
+    conn = _get_auth_conn()
+    try:
+        date_joined = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            'INSERT INTO users ("First Name","Last Name","Email Address","Password","Date Joined","Department","Position","Role") VALUES (?,?,?,?,?,?,?,?)',
+            (first, last, email, _hash_password(password), date_joined, dept, position, role)
+        )
+        conn.commit()
+        uid = conn.execute('SELECT "User ID" FROM users WHERE "Email Address"=?', (email,)).fetchone()["User ID"]
+        return {"success": True, "user_id": str(uid).zfill(4)}
+    except sqlite3.IntegrityError:
+        return {"success": False, "message": "An account with that email already exists."}
+    finally:
+        conn.close()
+
+
+@app.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: int, request: Request):
+    data = await request.json()
+    _, err = _require_admin(data)
+    if err:
+        return err
+    first    = (data.get("first_name") or "").strip()
+    last     = (data.get("last_name")  or "").strip()
+    email    = (data.get("email")      or "").strip().lower()
+    dept     = (data.get("department") or "").strip()
+    position = (data.get("position")   or "").strip()
+    role     = (data.get("role")       or "user").strip().lower()
+    if role not in ("user", "admin"):
+        role = "user"
+    if not all([first, last, email, dept, position]):
+        return {"success": False, "message": "All fields are required."}
+    conn = _get_auth_conn()
+    try:
+        result = conn.execute(
+            'UPDATE users SET "First Name"=?,"Last Name"=?,"Email Address"=?,"Department"=?,"Position"=?,"Role"=? WHERE "User ID"=?',
+            (first, last, email, dept, position, role, user_id)
+        )
+        conn.commit()
+        if result.rowcount == 0:
+            return {"success": False, "message": "User not found."}
+        return {"success": True}
+    except sqlite3.IntegrityError:
+        return {"success": False, "message": "That email is already in use."}
+    finally:
+        conn.close()
+
+
+@app.put("/admin/users/{user_id}/password")
+async def admin_reset_user_password(user_id: int, request: Request):
+    data = await request.json()
+    _, err = _require_admin(data)
+    if err:
+        return err
+    new_password = (data.get("new_password") or "")
+    if not new_password or len(new_password) < 8:
+        return {"success": False, "message": "Password must be at least 8 characters."}
+    conn = _get_auth_conn()
+    try:
+        result = conn.execute('UPDATE users SET "Password"=? WHERE "User ID"=?',
+                              (_hash_password(new_password), user_id))
+        conn.commit()
+        if result.rowcount == 0:
+            return {"success": False, "message": "User not found."}
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, request: Request):
+    data = await request.json()
+    _, err = _require_admin(data)
+    if err:
+        return err
+    admin_email = (data.get("admin_email") or "").strip().lower()
+    conn = _get_auth_conn()
+    try:
+        target = conn.execute('SELECT "Email Address" FROM users WHERE "User ID"=?', (user_id,)).fetchone()
+        if not target:
+            return {"success": False, "message": "User not found."}
+        if target["Email Address"] == admin_email:
+            return {"success": False, "message": "You cannot delete your own account."}
+        conn.execute('DELETE FROM users WHERE "User ID"=?', (user_id,))
+        conn.commit()
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=9038)
