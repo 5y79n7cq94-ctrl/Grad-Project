@@ -2,7 +2,7 @@ import os, sys, json, subprocess, glob, datetime, time, random, tempfile, reques
 from db_manager import ingest_crawler_data, mark_as_crawled
 
 # ── Apify 設定 ─────────────────────────────────────────────
-APIFY_TOKEN   = os.getenv("APIFY_TOKEN")
+APIFY_TOKEN   = api_token = os.getenv("APIFY_TOKEN")
 IG_ACTOR_ID   = "apify~instagram-scraper"
 FB_ACTOR_ID   = "apify~facebook-posts-scraper"
 APIFY_POLL_INTERVAL = 5    # 秒

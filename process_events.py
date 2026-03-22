@@ -22,12 +22,54 @@ from collections import defaultdict
 
 DATE_WINDOW_DAYS       = 90
 LOOKBACK_DAYS          = 30
-CONTENT_SIM_SAME_OP    = 0.55
-CONTENT_SIM_CROSS_OP   = 0.72
+CONTENT_SIM_SAME_OP    = 0.72   # embedding cosine similarity（同 operator）
+CONTENT_SIM_CROSS_OP   = 0.85   # embedding cosine similarity（跨 operator）
 MAX_CONTENT_LEN        = 300
 
+import os as _os
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv()
+_DASHSCOPE_API_KEY = _os.getenv("DASHSCOPE_API_KEY", "")
 
-# ── 文字正規化 ────────────────────────────────────────────
+# ── Embedding cache（避免重複 call API）────────────────────
+_emb_cache: dict = {}
+
+def _get_embedding(text: str):
+    """呼叫 DashScope text-embedding-v3，返回向量。失敗返回 None。"""
+    text = text.strip()[:500]
+    if not text:
+        return None
+    if text in _emb_cache:
+        return _emb_cache[text]
+    if not _DASHSCOPE_API_KEY:
+        return None
+    try:
+        import httpx
+        resp = httpx.post(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {_DASHSCOPE_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"model": "text-embedding-v3", "input": text},
+            timeout=15,
+        )
+        vec = resp.json()["data"][0]["embedding"]
+        _emb_cache[text] = vec
+        return vec
+    except Exception as e:
+        print(f"  ⚠️ embedding 失敗: {e}")
+        return None
+
+
+def _cosine(a, b) -> float:
+    import math
+    dot  = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x*x for x in a)) * math.sqrt(sum(x*x for x in b))
+    return dot / norm if norm else 0.0
+
+
+# ── 文字正規化（fallback 用）──────────────────────────────
 def normalize_content(text: str) -> str:
     if not text:
         return ""
@@ -38,10 +80,20 @@ def normalize_content(text: str) -> str:
 
 
 def content_similarity(a: str, b: str) -> float:
+    """
+    優先用 DashScope embedding cosine similarity（支援中英跨語言）。
+    API 失敗時 fallback 到 SequenceMatcher 文字比對。
+    """
+    if not a or not b:
+        return 0.0
+    va, vb = _get_embedding(a), _get_embedding(b)
+    if va and vb:
+        return _cosine(va, vb)
+    # fallback：純文字比對，scale 唔同，除以 1.5 對齊 threshold
     na, nb = normalize_content(a), normalize_content(b)
     if not na or not nb:
         return 0.0
-    return SequenceMatcher(None, na, nb).ratio()
+    return SequenceMatcher(None, na, nb).ratio() / 1.5
 
 
 # ── 日期處理 ──────────────────────────────────────────────
@@ -131,8 +183,14 @@ def dedup_by_content(posts: list[dict]) -> list[dict]:
                     continue
                 if cross_op and p['operator'] == q['operator']:
                     continue
-                sim = content_similarity(p['content'] or '', q['content'] or '')
-                if sim < threshold:
+                # Complete linkage：q 要同 group 內所有成員都 >= threshold
+                all_sim_ok = True
+                for existing in group:
+                    sim = content_similarity(existing['content'] or '', q['content'] or '')
+                    if sim < threshold:
+                        all_sim_ok = False
+                        break
+                if not all_sim_ok:
                     continue
                 ps, pe = parse_date_range(p.get('event_date') or '')
                 qs, qe = parse_date_range(q.get('event_date') or '')

@@ -257,6 +257,26 @@ def normalize_weibo(raw: dict, operator=None, event_date=None,
     }
 
 
+def _extract_chinese_only(text: str) -> str:
+    """
+    IG 帖文通常係中英雙語，英文係中文翻譯。
+    提取中文段落，去掉英文部分，減少去重時嘅語言干擾。
+    策略：按段落分割，只保留含有中文字符嘅段落。
+    如果完全冇中文（純英文帖），返回原文。
+    """
+    if not text:
+        return text
+    paragraphs = re.split(r'\n{1,}', text.strip())
+    chinese_paras = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', para):
+            chinese_paras.append(para)
+    return '\n'.join(chinese_paras) if chinese_paras else text
+
+
 def normalize_ig(raw: dict, operator=None, event_date=None,
                  category=None, sub_type=None) -> dict:
     raw_text    = raw.get('desc') or raw.get('title') or ""
@@ -284,7 +304,7 @@ def normalize_ig(raw: dict, operator=None, event_date=None,
         "operator":         operator,
         "author_id":        raw.get('ownerId'),
         "author_name":      to_trad(raw.get('ownerFullName') or raw.get('ownerUsername') or ""),
-        "content":          clean_text(raw_text),
+        "content":          clean_text(_extract_chinese_only(raw_text)),
         "published_at":     raw.get('create_date_time') or "",
         "event_date":       event_date or "",
         "likes":            L, "comments": C,

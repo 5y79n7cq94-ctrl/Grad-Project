@@ -695,6 +695,7 @@
         font-size:12.5px; font-weight:600; font-family:var(--font);
         transition:.15s ease;" onmouseover="this.style.background='rgba(220,38,38,0.18)'"
         onmouseout="this.style.background='rgba(220,38,38,0.10)'">Sign Out</button>
+
     </div>
   </div>
 
@@ -857,7 +858,73 @@
             </div>
           </section>
 
-          <!-- Block #2: Operator Perspective -->
+          <!-- Block #2: Analytics Charts -->
+          <section class="block" id="analyticsChartsBlock">
+            <div class="block-head">
+              <div>
+                <h3 class="block-title">Analytics Charts</h3>
+                <div class="block-sub">Click any segment or bar to filter the Events list above.</div>
+              </div>
+            </div>
+
+            <!-- Active filter banner (hidden until a chart is clicked) -->
+            <div id="chartFilterBanner" style="display:none;align-items:center;justify-content:space-between;gap:10px;
+              background:rgba(37,99,235,0.07);border:1px solid rgba(37,99,235,0.20);border-radius:14px;
+              padding:10px 14px;margin-bottom:14px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#1D4ED8;">
+                <span style="font-size:16px;">🔍</span>
+                <span id="chartFilterLabel">Filtering events…</span>
+              </div>
+              <button onclick="clearChartFilter()" style="padding:5px 12px;border-radius:8px;border:1px solid rgba(37,99,235,0.25);
+                background:rgba(37,99,235,0.10);color:#1D4ED8;font-size:12px;font-weight:650;cursor:pointer;
+                font-family:var(--font);white-space:nowrap;">✕ Clear filter</button>
+            </div>
+
+            <!-- Side-by-side: Doughnut (left) + Horizontal Bar (right) -->
+            <div class="charts-sidebyside" style="display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start;">
+
+              <!-- LEFT: Doughnut -->
+              <div>
+                <div style="font-size:13px;font-weight:700;margin-bottom:2px;color:var(--text);">Category Share</div>
+                <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">per organiser · click to filter</div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+                  <label style="font-size:11.5px;font-weight:600;color:var(--muted);white-space:nowrap;">View for</label>
+                  <select id="doughnutOperatorSelect" style="flex:1;min-width:0;padding:7px 10px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#F9FAFB;font-size:12px;font-family:var(--font);">
+                    <option value="Wynn">Wynn</option>
+                    <option value="Sands">Sands</option>
+                    <option value="Galaxy">Galaxy</option>
+                    <option value="MGM">MGM</option>
+                    <option value="Melco">Melco</option>
+                    <option value="SJM">SJM</option>
+                    <option value="Government">Government</option>
+                  </select>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:12px;">
+                  <div style="position:relative;width:160px;height:160px;flex-shrink:0;">
+                    <canvas id="doughnutChart" style="cursor:pointer;"></canvas>
+                    <div id="doughnutCenter" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
+                      <div id="doughnutCenterNum" style="font-size:22px;font-weight:750;color:var(--text);line-height:1;">0</div>
+                      <div style="font-size:10px;font-weight:600;color:var(--muted);margin-top:1px;">events</div>
+                    </div>
+                  </div>
+                  <div id="doughnutLegend" style="display:flex;flex-direction:column;gap:6px;width:100%;padding:0 4px;"></div>
+                </div>
+              </div>
+
+              <!-- RIGHT: Horizontal Bar -->
+              <div>
+                <div style="font-size:13px;font-weight:700;margin-bottom:2px;color:var(--text);">Wynn vs Competitors</div>
+                <div style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">events per category · click to filter</div>
+                <div style="position:relative;height:300px;">
+                  <canvas id="barChart" style="cursor:pointer;"></canvas>
+                </div>
+                <div id="barLegend" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;justify-content:flex-start;"></div>
+              </div>
+
+            </div>
+          </section>
+
+          <!-- Block #3: Organiser Perspective -->
           <section class="block">
             <div class="block-head">
               <div>
@@ -888,7 +955,7 @@
             </div>
           </section>
 
-          <!-- Block #3: Market Intelligence Summary -->
+          <!-- Block #4: Market Intelligence Summary -->
           <section class="block">
             <div class="block-head">
               <div>
@@ -931,10 +998,15 @@
       last_name  : _sp.get('last_name'),
       email      : _sp.get('email'),
       position   : _sp.get('position'),
+      role       : _sp.get('role') || 'user',
+      token      : _sp.get('token') || '',
     } : null;
 
     if (!_session) {
       window.location.href = 'login_page.html';
+    } else if (_session.position === 'IT Admin') {
+      // IT Admins belong in admin_page, not here
+      window.location.href = 'admin_page.html?' + window.location.search.slice(1);
     } else {
       const fullName = _session.first_name + ' ' + _session.last_name;
       document.addEventListener('DOMContentLoaded', function() {
@@ -1095,11 +1167,46 @@
       document.querySelectorAll(`input[name="${name}"]`).forEach(x => x.checked = checked);
     }
 
+    // Date range is now resolved via Monthly/Quarterly picker (resolveDateRange)
     function validateDateRange(fromStr, toStr){
       if(!fromStr || !toStr) return true;
-      const from = new Date(fromStr);
-      const to = new Date(toStr);
-      return to >= from;
+      return new Date(toStr) >= new Date(fromStr);
+    }
+
+    const QUARTER_RANGES = {
+      Q1: ['01-01', '03-31'],
+      Q2: ['04-01', '06-30'],
+      Q3: ['07-01', '09-30'],
+      Q4: ['10-01', '12-31'],
+    };
+
+    let _dateMode = 'monthly';
+
+    function setDateMode(mode) {
+      _dateMode = mode;
+      const isMo = mode === 'monthly';
+      $('monthlyPicker').style.display   = isMo ? '' : 'none';
+      $('quarterlyPicker').style.display = isMo ? 'none' : '';
+      $('toggleMonthly').style.background   = isMo ? 'var(--brand)' : 'transparent';
+      $('toggleMonthly').style.color        = isMo ? '#fff' : 'var(--muted)';
+      $('toggleQuarterly').style.background = isMo ? 'transparent' : 'var(--brand)';
+      $('toggleQuarterly').style.color      = isMo ? 'var(--muted)' : '#fff';
+    }
+
+    function resolveDateRange() {
+      if (_dateMode === 'monthly') {
+        const y = $('monthYear').value;
+        const m = $('monthSelect').value;
+        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+        $('fromDate').value = `${y}-${m}-01`;
+        $('toDate').value   = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
+      } else {
+        const y = $('quarterYear').value;
+        const q = $('quarterSelect').value;
+        const [start, end] = QUARTER_RANGES[q];
+        $('fromDate').value = `${y}-${start}`;
+        $('toDate').value   = `${y}-${end}`;
+      }
     }
 
     function buildArchivedQuery(){
@@ -1600,7 +1707,35 @@
 
         const dateStr = (act.date && act.date !== 'N/A') ? `📅 ${formatEventDate(act.date)}` : '';
         const locHtml = act.location ? `<div style="font-size:11px;color:#6B7280;margin-top:3px;">📍 ${act.location}</div>` : '';
-        const linkHtml = act.url ? `<a style="font-size:11px;color:#2563EB;text-decoration:none;display:inline-block;margin-top:6px;" href="${act.url}" target="_blank">View Post →</a>` : '';
+        // source_posts is an array returned by bridge.py: [{post_id, platform, url, title, published_at}]
+        const sourcePosts = Array.isArray(act.source_posts) ? act.source_posts.filter(p => p.url) : [];
+        const cardId = 'sp-' + Math.random().toString(36).slice(2, 8);
+        const linkHtml = sourcePosts.length
+            ? `<div style="margin-top:6px;">
+                <button onclick="
+                  var d=document.getElementById('${cardId}');
+                  var expanded=d.style.display!=='none';
+                  d.style.display=expanded?'none':'flex';
+                  this.textContent=expanded?'🔗 See Original Post ▾':'🔗 Hide Posts ▴';
+                " style="font-size:11px;font-weight:600;color:#2563EB;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.18);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;">🔗 See Original Post ▾</button>
+                <div id="${cardId}" style="display:none;flex-direction:column;gap:6px;margin-top:8px;padding:8px;background:#F8FAFF;border-radius:8px;border:1px solid rgba(37,99,235,0.12);">
+                  ${sourcePosts.map(p => {
+                    const platIcon = {xhs:'📕',ig:'📸',fb:'📘',weibo:'🐦'}[p.platform]||'🔗';
+                    const platLabel = {xhs:'小紅書',ig:'Instagram',fb:'Facebook',weibo:'微博'}[p.platform]||p.platform||'Post';
+                    const dateStr = p.published_at ? p.published_at.slice(0,10) : '';
+                    const preview = p.title ? p.title.slice(0,50)+(p.title.length>50?'…':'') : '';
+                    return `<a href="${p.url}" target="_blank" style="display:flex;align-items:flex-start;gap:8px;text-decoration:none;padding:7px 9px;border-radius:7px;background:#fff;border:1px solid rgba(37,99,235,0.10);transition:background .12s;" onmouseover="this.style.background='#EEF3FF'" onmouseout="this.style.background='#fff'">
+                      <span style="font-size:15px;flex-shrink:0;">${platIcon}</span>
+                      <div style="min-width:0;">
+                        <div style="font-size:11px;font-weight:600;color:#2563EB;">${platLabel}${dateStr?' · '+dateStr:''}</div>
+                        ${preview?`<div style="font-size:11px;color:#475569;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>`:''}
+                      </div>
+                      <span style="margin-left:auto;font-size:11px;color:#94A3B8;flex-shrink:0;">↗</span>
+                    </a>`;
+                  }).join('')}
+                </div>
+               </div>`
+            : (act.url ? `<a style="font-size:11px;color:#2563EB;text-decoration:none;display:inline-block;margin-top:6px;" href="${act.url}" target="_blank">View Post →</a>` : '');
 
         const el = document.createElement("div");
         el.style.cssText = `
@@ -1749,50 +1884,13 @@
       if (this.value.trim()) { _addTag(this.value); this.value = ""; }
     });
 
-    // ── Date mode toggle (Monthly / Quarterly) ───────────────
-    const QUARTER_RANGES = {
-      Q1: ['01-01', '03-31'],
-      Q2: ['04-01', '06-30'],
-      Q3: ['07-01', '09-30'],
-      Q4: ['10-01', '12-31'],
-    };
-
-    let _dateMode = 'monthly';
-
-    function setDateMode(mode) {
-      _dateMode = mode;
-      const isMo = mode === 'monthly';
-      $('monthlyPicker').style.display  = isMo ? '' : 'none';
-      $('quarterlyPicker').style.display = isMo ? 'none' : '';
-      $('toggleMonthly').style.background   = isMo ? 'var(--brand)' : 'transparent';
-      $('toggleMonthly').style.color        = isMo ? '#fff' : 'var(--muted)';
-      $('toggleQuarterly').style.background = isMo ? 'transparent' : 'var(--brand)';
-      $('toggleQuarterly').style.color      = isMo ? 'var(--muted)' : '#fff';
-    }
-
-    function resolveDateRange() {
-      if (_dateMode === 'monthly') {
-        const y = $('monthYear').value;
-        const m = $('monthSelect').value;
-        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
-        $('fromDate').value = `${y}-${m}-01`;
-        $('toDate').value   = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
-      } else {
-        const y = $('quarterYear').value;
-        const q = $('quarterSelect').value;
-        const [start, end] = QUARTER_RANGES[q];
-        $('fromDate').value = `${y}-${start}`;
-        $('toDate').value   = `${y}-${end}`;
-      }
-    }
-
     $("applyBtn").addEventListener("click", async () => {
         // flush any partially typed keyword
         var partial = document.getElementById("kwInput").value.trim();
         if (partial) { _addTag(partial); document.getElementById("kwInput").value = ""; }
 
         const rawInput = $("keywords").value.trim();  // comma-joined tags
-        resolveDateRange();
+        resolveDateRange();  // populate hidden fromDate/toDate from picker
         const fromDate = $("fromDate").value; 
         const toDate = $("toDate").value;
         const selectedCats = getSelectedValues("category");
@@ -1826,8 +1924,8 @@
       setDateMode('monthly');
       $('monthYear').value   = '2026';
       $('monthSelect').value = '03';
-      $('fromDate').value = "";
-      $('toDate').value = "";
+      $("fromDate").value = "";
+      $("toDate").value = "";
       $("dateError").style.display = "none";
       fillResults(DEMO);
     });
@@ -1836,5 +1934,397 @@
 
     fillResults(DEMO);
   </script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+//  ANALYTICS CHARTS — Doughnut + Horizontal Bar
+//  with click-to-filter on Events block
+// ══════════════════════════════════════════════════════
+
+const CHART_CAT_CONFIG = {
+  concert:       { label:'Concert',     color:'#6366F1' },
+  sport:         { label:'Sport',       color:'#F43F5E' },
+  crossover:     { label:'Crossover',   color:'#F59E0B' },
+  exhibition:    { label:'Exhibition',  color:'#06B6D4' },
+  experience:    { label:'Experience',  color:'#10B981' },
+  food:          { label:'Food',        color:'#F97316' },
+  accommodation: { label:'Hotel',       color:'#3B82F6' },
+  shopping:      { label:'Shopping',    color:'#A855F7' },
+  gaming:        { label:'Gaming',      color:'#EC4899' },
+};
+
+const CHART_OP_COLORS = {
+  Wynn:       '#F59E0B',
+  Sands:      '#3B82F6',
+  Galaxy:     '#10B981',
+  MGM:        '#F43F5E',
+  Melco:      '#A855F7',
+  SJM:        '#06B6D4',
+  Government: '#64748B',
+};
+
+let _chartCatData   = {};
+let _doughnutChart  = null;
+let _barChart       = null;
+
+// Active drill-down filter: { operator: string|null, catKey: string|null }
+let _chartFilter = { operator: null, catKey: null };
+
+// ── Build catData ────────────────────────────────────────
+function _extractCatData(rawSummaries) {
+  const CAT_KEYS = Object.keys(CHART_CAT_CONFIG);
+  let catData = {};
+  if (!rawSummaries) return catData;
+  const data = rawSummaries.category_summaries
+    ? rawSummaries.category_summaries
+    : rawSummaries.operator_summaries
+      ? rawSummaries.operator_summaries
+      : rawSummaries;
+  const isNewFormat = data && Object.keys(data).some(k => CAT_KEYS.includes(k));
+  if (isNewFormat) {
+    for (const [cat, acts] of Object.entries(data)) {
+      if (acts && acts.length) catData[cat] = acts;
+    }
+  } else if (data) {
+    for (const [op, acts] of Object.entries(data)) {
+      if (!acts || !acts.length) continue;
+      for (const act of acts) {
+        const cat = act.sub_type || act.category || 'experience';
+        if (!catData[cat]) catData[cat] = [];
+        catData[cat].push({ ...act, operator: op });
+      }
+    }
+  }
+  return catData;
+}
+
+// ── Apply chart filter to Events block ──────────────────
+function applyChartFilter(operatorName, catKey) {
+  _chartFilter = { operator: operatorName, catKey };
+
+  const banner = document.getElementById('chartFilterBanner');
+  const label  = document.getElementById('chartFilterLabel');
+  const catCfg = CHART_CAT_CONFIG[catKey] || { label: catKey, color: '#6B7280' };
+  const opColor = CHART_OP_COLORS[operatorName] || '#6B7280';
+  if (banner) banner.style.display = 'flex';
+  if (label) label.innerHTML =
+    `Showing: <span style="color:${opColor};font-weight:700;">${operatorName}</span>` +
+    ` · <span style="color:${catCfg.color};font-weight:700;">${catCfg.label}</span> events`;
+
+  const filtered = {};
+  if (_chartCatData[catKey]) {
+    const matching = _chartCatData[catKey].filter(a =>
+      (a.operator || '').toLowerCase() === operatorName.toLowerCase()
+    );
+    if (matching.length) filtered[catKey] = matching;
+  }
+
+  const container = document.getElementById('analyticsContent');
+  if (container) {
+    container.innerHTML = '';
+    _renderGroupedBody(filtered, container);
+  }
+
+  const evBlock = document.querySelector('.block');
+  if (evBlock) evBlock.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  renderDoughnutChart(operatorName);
+  renderBarChart();
+}
+
+function clearChartFilter() {
+  _chartFilter = { operator: null, catKey: null };
+  const banner = document.getElementById('chartFilterBanner');
+  if (banner) banner.style.display = 'none';
+
+  const container = document.getElementById('analyticsContent');
+  if (container) {
+    container.innerHTML = '';
+    _renderGroupedBody(_chartCatData, container);
+  }
+
+  const sel = document.getElementById('doughnutOperatorSelect');
+  renderDoughnutChart(sel ? sel.value : 'Wynn');
+  renderBarChart();
+}
+
+// ── Doughnut Chart ───────────────────────────────────────
+function renderDoughnutChart(operatorName) {
+  const canvas    = document.getElementById('doughnutChart');
+  const legend    = document.getElementById('doughnutLegend');
+  const centerNum = document.getElementById('doughnutCenterNum');
+  if (!canvas) return;
+
+  const counts = {};
+  for (const [catKey, acts] of Object.entries(_chartCatData)) {
+    const n = acts.filter(a => (a.operator||'').toLowerCase() === operatorName.toLowerCase()).length;
+    if (n > 0) counts[catKey] = n;
+  }
+
+  const labels = [], values = [], colors = [], catKeys = [];
+  for (const [k, v] of Object.entries(counts)) {
+    const cfg = CHART_CAT_CONFIG[k] || { label: k, color: '#94A3B8' };
+    labels.push(cfg.label); values.push(v);
+    const isActive = _chartFilter.catKey === k && _chartFilter.operator === operatorName;
+    const isFiltering = _chartFilter.catKey !== null && _chartFilter.operator === operatorName;
+    colors.push(isFiltering && !isActive ? cfg.color + '40' : cfg.color);
+    catKeys.push(k);
+  }
+
+  const total = values.reduce((s, v) => s + v, 0);
+  if (centerNum) centerNum.textContent = total;
+  if (_doughnutChart) { _doughnutChart.destroy(); _doughnutChart = null; }
+
+  if (total === 0) {
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    if (legend) legend.innerHTML = `<span style="font-size:11px;color:var(--muted);">No data for ${operatorName}</span>`;
+    return;
+  }
+
+  _doughnutChart = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: colors, borderWidth: 2, borderColor: '#fff', hoverOffset: 6 }]
+    },
+    options: {
+      cutout: '65%',
+      responsive: true,
+      maintainAspectRatio: true,
+      onClick(evt, elements) {
+        if (!elements.length) return;
+        const idx = elements[0].index;
+        const clickedCatKey = catKeys[idx];
+        if (_chartFilter.operator === operatorName && _chartFilter.catKey === clickedCatKey) {
+          clearChartFilter();
+        } else {
+          applyChartFilter(operatorName, clickedCatKey);
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${ctx.parsed} (${Math.round(ctx.parsed/total*100)}%) — click to filter`
+          }
+        }
+      }
+    }
+  });
+
+  if (legend) {
+    legend.innerHTML = labels.map((lbl, i) => {
+      const origCfg = CHART_CAT_CONFIG[catKeys[i]] || { color: '#94A3B8' };
+      const isActive = _chartFilter.catKey === catKeys[i] && _chartFilter.operator === operatorName;
+      return `
+        <div onclick="(function(){
+          var ck='${catKeys[i]}',op='${operatorName}';
+          if(_chartFilter.catKey===ck && _chartFilter.operator===op){clearChartFilter();}
+          else{applyChartFilter(op,ck);}
+        })()" style="display:flex;align-items:center;justify-content:space-between;gap:6px;
+          font-size:11.5px;font-weight:600;color:rgba(15,23,42,0.80);
+          cursor:pointer;padding:3px 6px;border-radius:6px;
+          background:${isActive ? origCfg.color+'18' : 'transparent'};
+          border:1px solid ${isActive ? origCfg.color+'40' : 'transparent'};
+          transition:background .15s;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${origCfg.color};flex-shrink:0;"></span>
+            ${lbl}
+          </div>
+          <span style="font-weight:700;color:${origCfg.color};">${values[i]}</span>
+        </div>`;
+    }).join('');
+  }
+}
+
+// ── Horizontal Grouped Bar Chart ─────────────────────────
+function renderBarChart() {
+  const canvas = document.getElementById('barChart');
+  const legend = document.getElementById('barLegend');
+  if (!canvas) return;
+
+  const opSet = new Set();
+  for (const acts of Object.values(_chartCatData))
+    for (const a of acts)
+      if (a.operator) opSet.add(a.operator.charAt(0).toUpperCase() + a.operator.slice(1));
+
+  const operators = ['Wynn', ...[...opSet].filter(o => o !== 'Wynn').sort()];
+  const activeCats = Object.keys(_chartCatData).filter(k => _chartCatData[k].length > 0);
+  const catLabels  = activeCats.map(k => (CHART_CAT_CONFIG[k] || { label: k }).label);
+
+  const isFilteringBar = _chartFilter.catKey !== null;
+
+  const datasets = operators.map(op => {
+    const data = activeCats.map(catKey =>
+      (_chartCatData[catKey] || []).filter(a =>
+        (a.operator || '').toLowerCase() === op.toLowerCase()
+      ).length
+    );
+    const isWynn = op === 'Wynn';
+    const color  = CHART_OP_COLORS[op] || '#94A3B8';
+
+    const bgColors = activeCats.map((catKey) => {
+      const isActiveSegment = _chartFilter.catKey === catKey && _chartFilter.operator === op;
+      if (!isFilteringBar) return isWynn ? color + 'EE' : color + '88';
+      if (_chartFilter.operator && _chartFilter.catKey) {
+        return isActiveSegment ? color + 'EE' : color + '22';
+      }
+      return isWynn ? color + 'EE' : color + '88';
+    });
+
+    return {
+      label: op,
+      data,
+      backgroundColor: bgColors,
+      borderColor: activeCats.map((catKey) => {
+        if (!isFilteringBar) return color;
+        const isActiveSegment = _chartFilter.catKey === catKey && _chartFilter.operator === op;
+        return isActiveSegment ? color : color + '44';
+      }),
+      borderWidth: isWynn ? 2 : 1,
+      borderRadius: 4,
+      borderSkipped: false,
+    };
+  });
+
+  if (_barChart) { _barChart.destroy(); _barChart = null; }
+
+  if (activeCats.length === 0) {
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    if (legend) legend.innerHTML = `<span style="font-size:11px;color:var(--muted);">No data available.</span>`;
+    return;
+  }
+
+  _barChart = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: catLabels, datasets },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      onClick(evt, elements) {
+        if (!elements.length) return;
+        const el     = elements[0];
+        const catKey = activeCats[el.index];
+        const opName = operators[el.datasetIndex];
+        if (_chartFilter.operator === opName && _chartFilter.catKey === catKey) {
+          clearChartFilter();
+        } else {
+          const sel = document.getElementById('doughnutOperatorSelect');
+          if (sel) sel.value = opName;
+          applyChartFilter(opName, catKey);
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: { footer: () => 'Click to filter Events' }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { stepSize: 1, precision: 0, font: { size: 11 }, color: 'rgba(15,23,42,0.55)' },
+          grid: { color: 'rgba(15,23,42,0.07)' }
+        },
+        y: {
+          grid: { display: false },
+          ticks: { font: { size: 12, weight: '600' }, color: 'rgba(15,23,42,0.75)' }
+        }
+      }
+    }
+  });
+
+  if (legend) {
+    legend.innerHTML = operators.map(op => {
+      const color  = CHART_OP_COLORS[op] || '#94A3B8';
+      const isWynn = op === 'Wynn';
+      const isDimmed = isFilteringBar && _chartFilter.operator && _chartFilter.operator !== op;
+      return `<div style="display:flex;align-items:center;gap:5px;font-size:11.5px;
+        font-weight:${isWynn?'700':'500'};
+        color:${isDimmed ? 'rgba(15,23,42,0.30)' : 'rgba(15,23,42,0.80)'};">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;
+          background:${color};flex-shrink:0;
+          ${isWynn?'box-shadow:0 0 0 2px '+color+'55;':''}
+          opacity:${isDimmed?'0.3':'1'};"></span>
+        ${op}${isWynn?' ★':''}
+      </div>`;
+    }).join('');
+  }
+}
+
+// ── Master refresh ───────────────────────────────────────
+function refreshAnalyticsCharts(rawSummaries) {
+  _chartCatData = _extractCatData(rawSummaries);
+  _chartFilter  = { operator: null, catKey: null };
+  const banner  = document.getElementById('chartFilterBanner');
+  if (banner) banner.style.display = 'none';
+  const sel = document.getElementById('doughnutOperatorSelect');
+  renderDoughnutChart(sel ? sel.value : 'Wynn');
+  renderBarChart();
+}
+
+// Doughnut operator selector
+document.getElementById('doughnutOperatorSelect').addEventListener('change', function() {
+  if (_chartFilter.operator !== this.value) {
+    _chartFilter.catKey = null;
+    _chartFilter.operator = null;
+    const banner = document.getElementById('chartFilterBanner');
+    if (banner) banner.style.display = 'none';
+    const container = document.getElementById('analyticsContent');
+    if (container && Object.keys(_chartCatData).length) {
+      container.innerHTML = '';
+      _renderGroupedBody(_chartCatData, container);
+    }
+  }
+  renderDoughnutChart(this.value);
+});
+
+// ── Patch renderGroupedResults ───────────────────────────
+const _origRenderGrouped = renderGroupedResults;
+window.renderGroupedResults = function(summaries, isCrawling) {
+  _origRenderGrouped(summaries, isCrawling);
+  refreshAnalyticsCharts(summaries);
+};
+
+// ── Patch fillResults (DEMO mode) ────────────────────────
+const _origFillResults = fillResults;
+window.fillResults = function(data) {
+  _origFillResults(data);
+  const demoCatData = {};
+  const allDemoEvents = [
+    ...Object.entries(data.gamingByOperator || {}).flatMap(([op, evs]) =>
+      (evs||[]).map(e => ({ ...e, operator: op.toLowerCase(), category: 'gaming' }))
+    ),
+    ...Object.entries(data.nonGamingByOperator || {}).flatMap(([op, evs]) =>
+      (evs||[]).map(e => ({ ...e, operator: op.toLowerCase(), category: e.category || 'experience' }))
+    ),
+  ];
+  for (const ev of allDemoEvents) {
+    let cat = ev.category || 'experience';
+    const nm = (ev.name || '').toLowerCase();
+    if (nm.includes('concert') || nm.includes('music')) cat = 'concert';
+    else if (nm.includes('poker') || nm.includes('blackjack') || nm.includes('slot') || nm.includes('gaming')) cat = 'gaming';
+    else if (nm.includes('food') || nm.includes('festival') || nm.includes('chef')) cat = 'food';
+    else if (nm.includes('tourism') || nm.includes('briefing') || nm.includes('safety')) cat = 'experience';
+    if (!demoCatData[cat]) demoCatData[cat] = [];
+    demoCatData[cat].push(ev);
+  }
+  _chartCatData = demoCatData;
+  _chartFilter  = { operator: null, catKey: null };
+  const sel = document.getElementById('doughnutOperatorSelect');
+  renderDoughnutChart(sel ? sel.value : 'Wynn');
+  renderBarChart();
+};
+
+// Initial render
+window.fillResults(DEMO);
+</script>
+
+<!-- Admin panel removed — IT Admins are redirected to admin_page.html -->
+
 </body>
 </html>
