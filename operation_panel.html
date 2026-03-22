@@ -695,12 +695,6 @@
         font-size:12.5px; font-weight:600; font-family:var(--font);
         transition:.15s ease;" onmouseover="this.style.background='rgba(220,38,38,0.18)'"
         onmouseout="this.style.background='rgba(220,38,38,0.10)'">Sign Out</button>
-      <button id="admin-tab-btn" onclick="openAdminPanel()" style="
-        display:none; padding:7px 16px; border-radius:10px; border:none; cursor:pointer;
-        background:rgba(37,99,235,0.12); color:#2563EB;
-        font-size:12.5px; font-weight:600; font-family:var(--font);
-        transition:.15s ease;" onmouseover="this.style.background='rgba(37,99,235,0.22)'"
-        onmouseout="this.style.background='rgba(37,99,235,0.12)'">⚙️ Admin</button>
     </div>
   </div>
 
@@ -937,8 +931,6 @@
       last_name  : _sp.get('last_name'),
       email      : _sp.get('email'),
       position   : _sp.get('position'),
-      role       : _sp.get('role') || 'user',
-      token      : _sp.get('token') || '',
     } : null;
 
     if (!_session) {
@@ -950,11 +942,6 @@
         const aEl = document.getElementById('nav-avatar');
         if (uEl) uEl.textContent = fullName;
         if (aEl) aEl.textContent = (_session.first_name[0] + _session.last_name[0]).toUpperCase();
-        // Show Admin tab only for IT Admins
-        if (_session.position === 'IT Admin') {
-          const adminTabBtn = document.getElementById('admin-tab-btn');
-          if (adminTabBtn) adminTabBtn.style.display = 'inline-flex';
-        }
       });
     }
 
@@ -1108,46 +1095,11 @@
       document.querySelectorAll(`input[name="${name}"]`).forEach(x => x.checked = checked);
     }
 
-    // Date range is now resolved via Monthly/Quarterly picker (resolveDateRange)
     function validateDateRange(fromStr, toStr){
       if(!fromStr || !toStr) return true;
-      return new Date(toStr) >= new Date(fromStr);
-    }
-
-    const QUARTER_RANGES = {
-      Q1: ['01-01', '03-31'],
-      Q2: ['04-01', '06-30'],
-      Q3: ['07-01', '09-30'],
-      Q4: ['10-01', '12-31'],
-    };
-
-    let _dateMode = 'monthly';
-
-    function setDateMode(mode) {
-      _dateMode = mode;
-      const isMo = mode === 'monthly';
-      $('monthlyPicker').style.display   = isMo ? '' : 'none';
-      $('quarterlyPicker').style.display = isMo ? 'none' : '';
-      $('toggleMonthly').style.background   = isMo ? 'var(--brand)' : 'transparent';
-      $('toggleMonthly').style.color        = isMo ? '#fff' : 'var(--muted)';
-      $('toggleQuarterly').style.background = isMo ? 'transparent' : 'var(--brand)';
-      $('toggleQuarterly').style.color      = isMo ? 'var(--muted)' : '#fff';
-    }
-
-    function resolveDateRange() {
-      if (_dateMode === 'monthly') {
-        const y = $('monthYear').value;
-        const m = $('monthSelect').value;
-        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
-        $('fromDate').value = `${y}-${m}-01`;
-        $('toDate').value   = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
-      } else {
-        const y = $('quarterYear').value;
-        const q = $('quarterSelect').value;
-        const [start, end] = QUARTER_RANGES[q];
-        $('fromDate').value = `${y}-${start}`;
-        $('toDate').value   = `${y}-${end}`;
-      }
+      const from = new Date(fromStr);
+      const to = new Date(toStr);
+      return to >= from;
     }
 
     function buildArchivedQuery(){
@@ -1648,35 +1600,7 @@
 
         const dateStr = (act.date && act.date !== 'N/A') ? `📅 ${formatEventDate(act.date)}` : '';
         const locHtml = act.location ? `<div style="font-size:11px;color:#6B7280;margin-top:3px;">📍 ${act.location}</div>` : '';
-        // source_posts is an array returned by bridge.py: [{post_id, platform, url, title, published_at}]
-        const sourcePosts = Array.isArray(act.source_posts) ? act.source_posts.filter(p => p.url) : [];
-        const cardId = 'sp-' + Math.random().toString(36).slice(2, 8);
-        const linkHtml = sourcePosts.length
-            ? `<div style="margin-top:6px;">
-                <button onclick="
-                  var d=document.getElementById('${cardId}');
-                  var expanded=d.style.display!=='none';
-                  d.style.display=expanded?'none':'flex';
-                  this.textContent=expanded?'🔗 See Original Post ▾':'🔗 Hide Posts ▴';
-                " style="font-size:11px;font-weight:600;color:#2563EB;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.18);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;">🔗 See Original Post ▾</button>
-                <div id="${cardId}" style="display:none;flex-direction:column;gap:6px;margin-top:8px;padding:8px;background:#F8FAFF;border-radius:8px;border:1px solid rgba(37,99,235,0.12);">
-                  ${sourcePosts.map(p => {
-                    const platIcon = {xhs:'📕',ig:'📸',fb:'📘',weibo:'🐦'}[p.platform]||'🔗';
-                    const platLabel = {xhs:'小紅書',ig:'Instagram',fb:'Facebook',weibo:'微博'}[p.platform]||p.platform||'Post';
-                    const dateStr = p.published_at ? p.published_at.slice(0,10) : '';
-                    const preview = p.title ? p.title.slice(0,50)+(p.title.length>50?'…':'') : '';
-                    return `<a href="${p.url}" target="_blank" style="display:flex;align-items:flex-start;gap:8px;text-decoration:none;padding:7px 9px;border-radius:7px;background:#fff;border:1px solid rgba(37,99,235,0.10);transition:background .12s;" onmouseover="this.style.background='#EEF3FF'" onmouseout="this.style.background='#fff'">
-                      <span style="font-size:15px;flex-shrink:0;">${platIcon}</span>
-                      <div style="min-width:0;">
-                        <div style="font-size:11px;font-weight:600;color:#2563EB;">${platLabel}${dateStr?' · '+dateStr:''}</div>
-                        ${preview?`<div style="font-size:11px;color:#475569;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${preview}</div>`:''}
-                      </div>
-                      <span style="margin-left:auto;font-size:11px;color:#94A3B8;flex-shrink:0;">↗</span>
-                    </a>`;
-                  }).join('')}
-                </div>
-               </div>`
-            : (act.url ? `<a style="font-size:11px;color:#2563EB;text-decoration:none;display:inline-block;margin-top:6px;" href="${act.url}" target="_blank">View Post →</a>` : '');
+        const linkHtml = act.url ? `<a style="font-size:11px;color:#2563EB;text-decoration:none;display:inline-block;margin-top:6px;" href="${act.url}" target="_blank">View Post →</a>` : '';
 
         const el = document.createElement("div");
         el.style.cssText = `
@@ -1825,13 +1749,50 @@
       if (this.value.trim()) { _addTag(this.value); this.value = ""; }
     });
 
+    // ── Date mode toggle (Monthly / Quarterly) ───────────────
+    const QUARTER_RANGES = {
+      Q1: ['01-01', '03-31'],
+      Q2: ['04-01', '06-30'],
+      Q3: ['07-01', '09-30'],
+      Q4: ['10-01', '12-31'],
+    };
+
+    let _dateMode = 'monthly';
+
+    function setDateMode(mode) {
+      _dateMode = mode;
+      const isMo = mode === 'monthly';
+      $('monthlyPicker').style.display  = isMo ? '' : 'none';
+      $('quarterlyPicker').style.display = isMo ? 'none' : '';
+      $('toggleMonthly').style.background   = isMo ? 'var(--brand)' : 'transparent';
+      $('toggleMonthly').style.color        = isMo ? '#fff' : 'var(--muted)';
+      $('toggleQuarterly').style.background = isMo ? 'transparent' : 'var(--brand)';
+      $('toggleQuarterly').style.color      = isMo ? 'var(--muted)' : '#fff';
+    }
+
+    function resolveDateRange() {
+      if (_dateMode === 'monthly') {
+        const y = $('monthYear').value;
+        const m = $('monthSelect').value;
+        const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+        $('fromDate').value = `${y}-${m}-01`;
+        $('toDate').value   = `${y}-${m}-${String(lastDay).padStart(2,'0')}`;
+      } else {
+        const y = $('quarterYear').value;
+        const q = $('quarterSelect').value;
+        const [start, end] = QUARTER_RANGES[q];
+        $('fromDate').value = `${y}-${start}`;
+        $('toDate').value   = `${y}-${end}`;
+      }
+    }
+
     $("applyBtn").addEventListener("click", async () => {
         // flush any partially typed keyword
         var partial = document.getElementById("kwInput").value.trim();
         if (partial) { _addTag(partial); document.getElementById("kwInput").value = ""; }
 
         const rawInput = $("keywords").value.trim();  // comma-joined tags
-        resolveDateRange();  // populate hidden fromDate/toDate from picker
+        resolveDateRange();
         const fromDate = $("fromDate").value; 
         const toDate = $("toDate").value;
         const selectedCats = getSelectedValues("category");
@@ -1865,8 +1826,8 @@
       setDateMode('monthly');
       $('monthYear').value   = '2026';
       $('monthSelect').value = '03';
-      $("fromDate").value = "";
-      $("toDate").value = "";
+      $('fromDate').value = "";
+      $('toDate').value = "";
       $("dateError").style.display = "none";
       fillResults(DEMO);
     });
@@ -1875,507 +1836,5 @@
 
     fillResults(DEMO);
   </script>
-
-<!-- ══════════════════════════════════════════════════════════════════════════
-     ADMIN PANEL OVERLAY  (IT Admin only — opened via ⚙️ Admin button in nav)
-     All user management is handled here; API calls go to port 9038 (bridge.py)
-     ══════════════════════════════════════════════════════════════════════════ -->
-<div id="admin-overlay" style="display:none; position:fixed; inset:0; z-index:500;
-  background:#F6F8FC; flex-direction:column; font-family:'DM Sans',ui-sans-serif,system-ui,sans-serif;">
-
-  <!-- Admin top bar -->
-  <div style="height:60px; background:#fff; border-bottom:1px solid rgba(17,24,39,0.08);
-    display:flex; align-items:center; justify-content:space-between; padding:0 28px;
-    position:sticky; top:0; z-index:100; flex-shrink:0;">
-    <div style="display:flex; align-items:center; gap:14px;">
-      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2563EB,#16A34A);
-        display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff;">MR</div>
-      <span style="font-size:15px;font-weight:600;">Macau Resort Analytics</span>
-      <span style="background:rgba(37,99,235,0.18);color:#3B82F6;border:1px solid rgba(37,99,235,0.35);
-        font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;letter-spacing:.4px;text-transform:uppercase;">Admin Panel</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:12px;">
-      <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(15,23,42,0.55);">
-        Signed in as&nbsp;<strong id="adm-topbar-name" style="color:#0F172A;font-weight:600;"></strong>
-      </div>
-      <div id="adm-topbar-avatar" style="width:32px;height:32px;border-radius:50%;
-        background:linear-gradient(135deg,#2563EB,#16A34A);display:grid;place-items:center;
-        font-size:12px;font-weight:700;color:#fff;"></div>
-      <button onclick="closeAdminPanel()" style="background:rgba(220,38,38,0.12);color:#B91C1C;
-        border:1px solid rgba(220,38,38,0.25);padding:6px 14px;border-radius:8px;
-        font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s ease;"
-        onmouseover="this.style.background='rgba(220,38,38,0.22)'"
-        onmouseout="this.style.background='rgba(220,38,38,0.12)'">← Back to Report</button>
-    </div>
-  </div>
-
-  <!-- Admin main content -->
-  <div style="flex:1;display:flex;flex-direction:column;padding:28px 32px;gap:24px;max-width:1400px;width:100%;margin:0 auto;overflow-y:auto;">
-
-    <!-- Stats row -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
-      <div style="background:#fff;border:1px solid rgba(17,24,39,0.08);border-radius:14px;padding:18px 20px;display:flex;align-items:center;gap:14px;">
-        <div style="width:42px;height:42px;border-radius:10px;background:rgba(37,99,235,0.14);display:grid;place-items:center;font-size:18px;flex-shrink:0;">👥</div>
-        <div><div id="adm-stat-total" style="font-size:22px;font-weight:700;line-height:1;">—</div><div style="font-size:12px;color:rgba(15,23,42,0.55);margin-top:4px;">Total Users</div></div>
-      </div>
-      <div style="background:#fff;border:1px solid rgba(17,24,39,0.08);border-radius:14px;padding:18px 20px;display:flex;align-items:center;gap:14px;">
-        <div style="width:42px;height:42px;border-radius:10px;background:rgba(220,38,38,0.14);display:grid;place-items:center;font-size:18px;flex-shrink:0;">🔑</div>
-        <div><div id="adm-stat-admins" style="font-size:22px;font-weight:700;line-height:1;">—</div><div style="font-size:12px;color:rgba(15,23,42,0.55);margin-top:4px;">IT Admins</div></div>
-      </div>
-      <div style="background:#fff;border:1px solid rgba(17,24,39,0.08);border-radius:14px;padding:18px 20px;display:flex;align-items:center;gap:14px;">
-        <div style="width:42px;height:42px;border-radius:10px;background:rgba(22,163,74,0.14);display:grid;place-items:center;font-size:18px;flex-shrink:0;">✅</div>
-        <div><div id="adm-stat-regular" style="font-size:22px;font-weight:700;line-height:1;">—</div><div style="font-size:12px;color:rgba(15,23,42,0.55);margin-top:4px;">Regular Users</div></div>
-      </div>
-      <div style="background:#fff;border:1px solid rgba(17,24,39,0.08);border-radius:14px;padding:18px 20px;display:flex;align-items:center;gap:14px;">
-        <div style="width:42px;height:42px;border-radius:10px;background:rgba(217,119,6,0.14);display:grid;place-items:center;font-size:18px;flex-shrink:0;">🏢</div>
-        <div><div id="adm-stat-depts" style="font-size:22px;font-weight:700;line-height:1;">—</div><div style="font-size:12px;color:rgba(15,23,42,0.55);margin-top:4px;">Departments</div></div>
-      </div>
-    </div>
-
-    <!-- Toolbar -->
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:240px;">
-        <div style="position:relative;flex:1;max-width:340px;">
-          <svg style="position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;opacity:.4;pointer-events:none;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="adm-search" type="text" placeholder="Search by name, email, department…" oninput="admRenderTable()"
-            style="width:100%;padding:8px 12px 8px 34px;background:#fff;border:1px solid rgba(17,24,39,0.13);border-radius:9px;color:#0F172A;font-family:inherit;font-size:13px;">
-        </div>
-        <select id="adm-filter-dept" onchange="admRenderTable()"
-          style="padding:8px 28px 8px 10px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23888%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;">
-          <option value="">All Departments</option>
-        </select>
-        <select id="adm-filter-role" onchange="admRenderTable()"
-          style="padding:8px 28px 8px 10px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23888%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;">
-          <option value="">All Roles</option>
-          <option value="admin">Admin</option>
-          <option value="user">User</option>
-        </select>
-      </div>
-      <button onclick="admOpenCreateModal()"
-        style="display:flex;align-items:center;gap:7px;padding:8px 18px;border-radius:9px;border:none;cursor:pointer;background:#2563EB;color:#fff;font-family:inherit;font-size:13px;font-weight:600;transition:.15s ease;"
-        onmouseover="this.style.background='#3B82F6'" onmouseout="this.style.background='#2563EB'">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:15px;height:15px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Add User
-      </button>
-    </div>
-
-    <!-- Table -->
-    <div style="background:#fff;border:1px solid rgba(17,24,39,0.08);border-radius:14px;overflow:hidden;">
-      <div style="padding:14px 20px;border-bottom:1px solid rgba(17,24,39,0.08);display:flex;align-items:center;justify-content:space-between;">
-        <span style="font-size:14px;font-weight:600;">User Directory</span>
-        <span id="adm-row-count" style="font-size:12px;color:rgba(15,23,42,0.55);font-family:ui-monospace,monospace;">Loading…</span>
-      </div>
-      <div style="overflow-x:auto;">
-        <table id="adm-table" style="width:100%;border-collapse:collapse;">
-          <thead>
-            <tr style="background:#F1F5F9;">
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">User ID</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Name</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Email</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Department</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Position</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Role</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Joined</th>
-              <th style="padding:11px 16px;text-align:left;font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;">Actions</th>
-            </tr>
-          </thead>
-          <tbody id="adm-table-body">
-            <tr><td colspan="8" style="padding:56px 20px;text-align:center;color:rgba(15,23,42,0.55);">Loading users…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-  </div><!-- end admin main -->
-</div><!-- end admin-overlay -->
-
-<!-- Toast container (shared) -->
-<div id="adm-toast-container" style="position:fixed;bottom:24px;right:24px;z-index:999;display:flex;flex-direction:column;gap:8px;"></div>
-
-<!-- ── MODAL: CREATE / EDIT USER ── -->
-<div id="adm-user-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:600;align-items:center;justify-content:center;padding:20px;">
-  <div style="background:#fff;border:1px solid rgba(17,24,39,0.13);border-radius:18px;width:100%;max-width:500px;box-shadow:0 32px 64px rgba(0,0,0,0.4);animation:admSlideUp .2s ease;">
-    <div style="padding:22px 24px 18px;border-bottom:1px solid rgba(17,24,39,0.08);display:flex;align-items:center;justify-content:space-between;">
-      <span id="adm-modal-title" style="font-size:16px;font-weight:700;">Add New User</span>
-      <button onclick="admCloseModal('adm-user-modal')" style="background:rgba(0,0,0,0.06);border:none;color:rgba(15,23,42,0.55);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:18px;display:grid;place-items:center;line-height:1;">×</button>
-    </div>
-    <div style="padding:20px 24px;">
-      <div id="adm-user-alert" style="display:none;padding:9px 13px;border-radius:9px;font-size:12.5px;font-weight:500;margin-bottom:14px;background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C;"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
-        <div style="margin-bottom:16px;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">First Name</label>
-          <input type="text" id="adm-m-first" placeholder="e.g., Amy" style="width:100%;padding:9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-        </div>
-        <div style="margin-bottom:16px;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Last Name</label>
-          <input type="text" id="adm-m-last" placeholder="e.g., Chan" style="width:100%;padding:9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-        </div>
-        <div style="margin-bottom:16px;grid-column:1/-1;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Email Address</label>
-          <input type="email" id="adm-m-email" placeholder="e.g., amychan@wynnpalace.com" style="width:100%;padding:9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-        </div>
-        <div style="margin-bottom:16px;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Department</label>
-          <select id="adm-m-dept" style="width:100%;padding:9px 28px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23888%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;">
-            <option value="" disabled selected>Select department</option>
-            <option>Analytics</option><option>Finance</option><option>Operations</option>
-            <option>Marketing</option><option>IT &amp; Systems</option><option>HR</option>
-            <option>Executive</option><option>Other</option>
-          </select>
-        </div>
-        <div style="margin-bottom:16px;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Position</label>
-          <select id="adm-m-position" style="width:100%;padding:9px 28px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23888%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;">
-            <option value="" disabled selected>Select position</option>
-            <option>Executive</option><option>Analyst</option><option>Senior Analyst</option>
-            <option>Manager</option><option>Director</option><option>IT Admin</option>
-          </select>
-        </div>
-        <div style="margin-bottom:16px;grid-column:1/-1;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">System Role</label>
-          <select id="adm-m-role" style="width:100%;padding:9px 28px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%23888%22 stroke-width=%222%22%3E%3Cpath d=%22M6 9l6 6 6-6%22/%3E%3C/svg%3E');background-repeat:no-repeat;background-position:right 10px center;">
-            <option value="user">User — Standard access</option>
-            <option value="admin">Admin — Full access</option>
-          </select>
-        </div>
-        <div id="adm-m-pw-field" style="margin-bottom:16px;grid-column:1/-1;">
-          <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Password</label>
-          <div style="position:relative;">
-            <input type="password" id="adm-m-password" placeholder="Min. 8 characters" style="width:100%;padding:9px 40px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-            <button type="button" onclick="admTogglePw('adm-m-password')" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:rgba(15,23,42,0.55);display:flex;align-items:center;padding:2px;">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div style="padding:16px 24px;border-top:1px solid rgba(17,24,39,0.08);display:flex;gap:10px;justify-content:flex-end;">
-      <button onclick="admCloseModal('adm-user-modal')" style="padding:9px 18px;border-radius:9px;border:1px solid rgba(17,24,39,0.13);background:transparent;color:rgba(15,23,42,0.55);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
-      <button id="adm-modal-save-btn" onclick="admHandleSaveUser()" style="padding:9px 22px;border-radius:9px;border:none;background:#2563EB;color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Create User</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── MODAL: RESET PASSWORD ── -->
-<div id="adm-pw-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:600;align-items:center;justify-content:center;padding:20px;">
-  <div style="background:#fff;border:1px solid rgba(17,24,39,0.13);border-radius:18px;width:100%;max-width:460px;box-shadow:0 32px 64px rgba(0,0,0,0.4);animation:admSlideUp .2s ease;">
-    <div style="padding:22px 24px 18px;border-bottom:1px solid rgba(17,24,39,0.08);display:flex;align-items:center;justify-content:space-between;">
-      <span style="font-size:16px;font-weight:700;">Reset Password</span>
-      <button onclick="admCloseModal('adm-pw-modal')" style="background:rgba(0,0,0,0.06);border:none;color:rgba(15,23,42,0.55);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:18px;display:grid;place-items:center;">×</button>
-    </div>
-    <div style="padding:20px 24px;">
-      <div id="adm-pw-alert" style="display:none;padding:9px 13px;border-radius:9px;font-size:12.5px;font-weight:500;margin-bottom:14px;background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C;"></div>
-      <p style="font-size:13px;color:rgba(15,23,42,0.55);margin-bottom:16px;line-height:1.6;">Set a new password for <strong id="adm-pw-target-name" style="color:#0F172A;"></strong>.</p>
-      <div style="margin-bottom:14px;">
-        <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">New Password</label>
-        <div style="position:relative;">
-          <input type="password" id="adm-pw-new" placeholder="Min. 8 characters" style="width:100%;padding:9px 40px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-          <button type="button" onclick="admTogglePw('adm-pw-new')" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:rgba(15,23,42,0.55);display:flex;align-items:center;">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-      </div>
-      <div>
-        <label style="display:block;font-size:11px;font-weight:600;margin-bottom:5px;color:rgba(15,23,42,0.55);letter-spacing:.4px;text-transform:uppercase;">Confirm Password</label>
-        <div style="position:relative;">
-          <input type="password" id="adm-pw-confirm" placeholder="Re-enter password" style="width:100%;padding:9px 40px 9px 12px;border-radius:9px;background:#fff;border:1px solid rgba(17,24,39,0.13);color:#0F172A;font-family:inherit;font-size:13px;">
-          <button type="button" onclick="admTogglePw('adm-pw-confirm')" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:rgba(15,23,42,0.55);display:flex;align-items:center;">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-    <div style="padding:16px 24px;border-top:1px solid rgba(17,24,39,0.08);display:flex;gap:10px;justify-content:flex-end;">
-      <button onclick="admCloseModal('adm-pw-modal')" style="padding:9px 18px;border-radius:9px;border:1px solid rgba(17,24,39,0.13);background:transparent;color:rgba(15,23,42,0.55);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
-      <button id="adm-pw-save-btn" onclick="admHandleResetPassword()" style="padding:9px 22px;border-radius:9px;border:none;background:#2563EB;color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Reset Password</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── MODAL: DELETE CONFIRM ── -->
-<div id="adm-del-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:600;align-items:center;justify-content:center;padding:20px;">
-  <div style="background:#fff;border:1px solid rgba(17,24,39,0.13);border-radius:18px;width:100%;max-width:420px;box-shadow:0 32px 64px rgba(0,0,0,0.4);animation:admSlideUp .2s ease;">
-    <div style="padding:22px 24px 0;display:flex;align-items:center;justify-content:flex-end;">
-      <button onclick="admCloseModal('adm-del-modal')" style="background:rgba(0,0,0,0.06);border:none;color:rgba(15,23,42,0.55);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:18px;display:grid;place-items:center;">×</button>
-    </div>
-    <div style="padding:8px 24px 20px;text-align:center;">
-      <div style="width:52px;height:52px;border-radius:14px;background:rgba(220,38,38,0.14);display:grid;place-items:center;margin:0 auto 16px;font-size:24px;">🗑️</div>
-      <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;">Delete User Account</h3>
-      <p style="font-size:13px;color:rgba(15,23,42,0.55);line-height:1.6;">Are you sure you want to permanently delete <strong id="adm-del-target-name" style="color:#0F172A;"></strong>'s account? This cannot be undone.</p>
-    </div>
-    <div style="padding:16px 24px;border-top:1px solid rgba(17,24,39,0.08);display:flex;gap:10px;justify-content:flex-end;">
-      <button onclick="admCloseModal('adm-del-modal')" style="padding:9px 18px;border-radius:9px;border:1px solid rgba(17,24,39,0.13);background:transparent;color:rgba(15,23,42,0.55);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Cancel</button>
-      <button id="adm-del-confirm-btn" onclick="admHandleDeleteUser()" style="padding:9px 18px;border-radius:9px;border:none;background:#DC2626;color:#fff;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;">Yes, Delete</button>
-    </div>
-  </div>
-</div>
-
-<style>
-@keyframes admSlideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
-</style>
-
-<script>
-// ══════════════════════════════════════════════════════
-// ADMIN PANEL JS  — all functions prefixed with adm_
-// ══════════════════════════════════════════════════════
-const ADM_API = 'http://127.0.0.1:9038';
-let admAllUsers = [];
-let admEditingUserId = null;
-let admTargetUserId  = null;
-
-function openAdminPanel() {
-  const overlay = document.getElementById('admin-overlay');
-  overlay.style.display = 'flex';
-  document.body.style.overflow = 'hidden';
-  // Populate header info
-  if (_session) {
-    document.getElementById('adm-topbar-name').textContent = _session.first_name + ' ' + _session.last_name;
-    document.getElementById('adm-topbar-avatar').textContent = (_session.first_name[0] + _session.last_name[0]).toUpperCase();
-  }
-  admLoadUsers();
-}
-
-function closeAdminPanel() {
-  document.getElementById('admin-overlay').style.display = 'none';
-  document.body.style.overflow = '';
-}
-
-// ── Load users ──────────────────────────────────────────
-async function admLoadUsers() {
-  const params = new URLSearchParams({ admin_email: _session.email, admin_token: _session.token });
-  try {
-    const res  = await fetch(`${ADM_API}/admin/users?${params}`);
-    const data = await res.json();
-    if (!data.success) { admShowToast('Failed to load users: ' + data.message, 'error'); return; }
-    admAllUsers = data.users;
-    admUpdateStats();
-    admPopulateDeptFilter();
-    admRenderTable();
-  } catch(e) {
-    admShowToast('Cannot reach server. Make sure bridge.py is running on port 9038.', 'error');
-  }
-}
-
-function admUpdateStats() {
-  document.getElementById('adm-stat-total').textContent   = admAllUsers.length;
-  document.getElementById('adm-stat-admins').textContent  = admAllUsers.filter(u => u.Position === 'IT Admin').length;
-  document.getElementById('adm-stat-regular').textContent = admAllUsers.filter(u => u.Position !== 'IT Admin').length;
-  document.getElementById('adm-stat-depts').textContent   = new Set(admAllUsers.map(u => u.Department)).size;
-}
-
-function admPopulateDeptFilter() {
-  const sel = document.getElementById('adm-filter-dept');
-  const cur = sel.value;
-  const depts = [...new Set(admAllUsers.map(u => u.Department))].sort();
-  sel.innerHTML = '<option value="">All Departments</option>' +
-    depts.map(d => `<option value="${d}">${d}</option>`).join('');
-  sel.value = cur;
-}
-
-// ── Render table ────────────────────────────────────────
-function admRenderTable() {
-  const q    = document.getElementById('adm-search').value.toLowerCase();
-  const dept = document.getElementById('adm-filter-dept').value;
-  const role = document.getElementById('adm-filter-role').value;
-  const ADM_COLORS = ['#2563EB','#7C3AED','#DB2777','#D97706','#059669','#0891B2','#DC2626','#16A34A'];
-
-  let filtered = admAllUsers.filter(u => {
-    const matchQ = !q || [u['First Name'],u['Last Name'],u['Email Address'],u.Department,u.Position].some(v=>v&&v.toLowerCase().includes(q));
-    const matchD = !dept || u.Department === dept;
-    const matchR = !role || (role==='admin' ? u.Position==='IT Admin' : u.Position!=='IT Admin');
-    return matchQ && matchD && matchR;
-  });
-
-  document.getElementById('adm-row-count').textContent = `${filtered.length} of ${admAllUsers.length} user${admAllUsers.length!==1?'s':''}`;
-
-  const tbody = document.getElementById('adm-table-body');
-  if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="padding:56px 20px;text-align:center;color:rgba(15,23,42,0.55);">No users match your search.</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = filtered.map(u => {
-    const initials = (u['First Name'][0]+u['Last Name'][0]).toUpperCase();
-    const color    = ADM_COLORS[u['User ID'] % ADM_COLORS.length];
-    const date     = u['Date Joined'] ? u['Date Joined'].slice(0,10) : '—';
-    const isAdmin  = u.Position === 'IT Admin';
-    const isSelf   = u['Email Address'] === _session.email;
-    return `<tr style="border-bottom:1px solid rgba(17,24,39,0.08);">
-      <td style="padding:13px 16px;font-size:12px;color:rgba(15,23,42,0.55);font-family:ui-monospace,monospace;">#${String(u['User ID']).padStart(4,'0')}</td>
-      <td style="padding:13px 16px;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div style="width:28px;height:28px;border-radius:50%;background:${color};display:grid;place-items:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;">${initials}</div>
-          <div>
-            <div style="font-size:13px;font-weight:600;">${admEsc(u['First Name'])} ${admEsc(u['Last Name'])}</div>
-            ${isSelf?'<div style="font-size:11px;color:#3B82F6;">You</div>':''}
-          </div>
-        </div>
-      </td>
-      <td style="padding:13px 16px;font-size:12px;color:rgba(15,23,42,0.55);font-family:ui-monospace,monospace;">${admEsc(u['Email Address'])}</td>
-      <td style="padding:13px 16px;"><span style="display:inline-block;padding:3px 9px;border-radius:6px;font-size:11.5px;font-weight:500;background:rgba(255,255,255,0.06);color:rgba(15,23,42,0.55);">${admEsc(u.Department)}</span></td>
-      <td style="padding:13px 16px;font-size:13px;color:rgba(15,23,42,0.55);">${admEsc(u.Position)}</td>
-      <td style="padding:13px 16px;">
-        <span style="display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;${isAdmin?'background:rgba(37,99,235,0.15);color:#3B82F6;border:1px solid rgba(37,99,235,0.3);':'background:rgba(22,163,74,0.12);color:#15803D;border:1px solid rgba(22,163,74,0.25);'}">
-          ${isAdmin?'🔑 IT Admin':'👤 User'}
-        </span>
-      </td>
-      <td style="padding:13px 16px;font-size:12px;color:rgba(15,23,42,0.55);font-family:ui-monospace,monospace;">${date}</td>
-      <td style="padding:13px 16px;">
-        <div style="display:flex;gap:6px;">
-          <button onclick="admOpenEditModal(${u['User ID']})" style="padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;background:rgba(37,99,235,0.15);color:#3B82F6;display:flex;align-items:center;gap:5px;">Edit</button>
-          <button onclick="admOpenPwModal(${u['User ID']})" style="padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;background:rgba(217,119,6,0.15);color:#B45309;display:flex;align-items:center;gap:5px;">Password</button>
-          ${!isSelf?`<button onclick="admOpenDelModal(${u['User ID']})" style="padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:inherit;background:rgba(220,38,38,0.13);color:#B91C1C;display:flex;align-items:center;gap:5px;">Delete</button>`:''}
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
-}
-
-function admEsc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-// ── Modals ──────────────────────────────────────────────
-function admOpenModal(id)  { const m=document.getElementById(id); m.style.display='flex'; }
-function admCloseModal(id) { document.getElementById(id).style.display='none'; }
-
-function admClearUserForm() {
-  ['adm-m-first','adm-m-last','adm-m-email','adm-m-password'].forEach(i=>document.getElementById(i).value='');
-  document.getElementById('adm-m-dept').value='';
-  document.getElementById('adm-m-position').value='';
-  document.getElementById('adm-m-role').value='user';
-  const a = document.getElementById('adm-user-alert'); a.style.display='none'; a.textContent='';
-}
-
-function admOpenCreateModal() {
-  admEditingUserId = null;
-  admClearUserForm();
-  document.getElementById('adm-modal-title').textContent       = 'Add New User';
-  document.getElementById('adm-modal-save-btn').textContent    = 'Create User';
-  document.getElementById('adm-m-pw-field').style.display      = '';
-  document.getElementById('adm-m-password').placeholder        = 'Min. 8 characters';
-  admOpenModal('adm-user-modal');
-}
-
-function admOpenEditModal(userId) {
-  const u = admAllUsers.find(x=>x['User ID']===userId);
-  if (!u) return;
-  admEditingUserId = userId;
-  admClearUserForm();
-  document.getElementById('adm-m-first').value    = u['First Name'];
-  document.getElementById('adm-m-last').value     = u['Last Name'];
-  document.getElementById('adm-m-email').value    = u['Email Address'];
-  document.getElementById('adm-m-dept').value     = u.Department;
-  document.getElementById('adm-m-position').value = u.Position;
-  document.getElementById('adm-m-role').value     = u.Role || 'user';
-  document.getElementById('adm-modal-title').textContent    = 'Edit User';
-  document.getElementById('adm-modal-save-btn').textContent = 'Save Changes';
-  document.getElementById('adm-m-pw-field').style.display   = 'none';
-  admOpenModal('adm-user-modal');
-}
-
-function admOpenPwModal(userId) {
-  const u = admAllUsers.find(x=>x['User ID']===userId);
-  if (!u) return;
-  admTargetUserId = userId;
-  document.getElementById('adm-pw-target-name').textContent = `${u['First Name']} ${u['Last Name']}`;
-  document.getElementById('adm-pw-new').value = '';
-  document.getElementById('adm-pw-confirm').value = '';
-  const a = document.getElementById('adm-pw-alert'); a.style.display='none'; a.textContent='';
-  admOpenModal('adm-pw-modal');
-}
-
-function admOpenDelModal(userId) {
-  const u = admAllUsers.find(x=>x['User ID']===userId);
-  if (!u) return;
-  admTargetUserId = userId;
-  document.getElementById('adm-del-target-name').textContent = `${u['First Name']} ${u['Last Name']}`;
-  admOpenModal('adm-del-modal');
-}
-
-// ── Save user ───────────────────────────────────────────
-async function admHandleSaveUser() {
-  const first    = document.getElementById('adm-m-first').value.trim();
-  const last     = document.getElementById('adm-m-last').value.trim();
-  const email    = document.getElementById('adm-m-email').value.trim().toLowerCase();
-  const dept     = document.getElementById('adm-m-dept').value;
-  const position = document.getElementById('adm-m-position').value;
-  const role     = document.getElementById('adm-m-role').value;
-  const password = document.getElementById('adm-m-password').value;
-  const alertEl  = document.getElementById('adm-user-alert');
-  const showErr  = (msg) => { alertEl.textContent=msg; alertEl.style.display='block'; };
-
-  if (!first||!last||!email||!dept||!position) { showErr('Please fill in all fields.'); return; }
-  if (!admEditingUserId && (!password||password.length<8)) { showErr('Password must be at least 8 characters.'); return; }
-
-  const btn = document.getElementById('adm-modal-save-btn');
-  btn.disabled = true;
-  const body = { admin_email: _session.email, admin_token: _session.token, first_name:first, last_name:last, email, department:dept, position, role };
-  try {
-    let res;
-    if (admEditingUserId) {
-      res = await fetch(`${ADM_API}/admin/users/${admEditingUserId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    } else {
-      body.password = password;
-      res = await fetch(`${ADM_API}/admin/users`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    }
-    const data = await res.json();
-    if (data.success) {
-      admCloseModal('adm-user-modal');
-      admShowToast(admEditingUserId ? 'User updated.' : `User created (ID: ${data.user_id}).`, 'success');
-      await admLoadUsers();
-    } else { showErr(data.message||'Operation failed.'); }
-  } catch { showErr('Cannot reach server.'); }
-  finally { btn.disabled = false; }
-}
-
-// ── Reset password ──────────────────────────────────────
-async function admHandleResetPassword() {
-  const newPw   = document.getElementById('adm-pw-new').value;
-  const confirm = document.getElementById('adm-pw-confirm').value;
-  const alertEl = document.getElementById('adm-pw-alert');
-  const showErr = (msg) => { alertEl.textContent=msg; alertEl.style.display='block'; };
-  if (!newPw||newPw.length<8) { showErr('Password must be at least 8 characters.'); return; }
-  if (newPw!==confirm)         { showErr('Passwords do not match.'); return; }
-  const btn = document.getElementById('adm-pw-save-btn');
-  btn.disabled = true;
-  try {
-    const res  = await fetch(`${ADM_API}/admin/users/${admTargetUserId}/password`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({admin_email:_session.email,admin_token:_session.token,new_password:newPw}) });
-    const data = await res.json();
-    if (data.success) { admCloseModal('adm-pw-modal'); admShowToast('Password reset successfully.','success'); }
-    else { showErr(data.message||'Failed.'); }
-  } catch { showErr('Cannot reach server.'); }
-  finally { btn.disabled = false; }
-}
-
-// ── Delete user ─────────────────────────────────────────
-async function admHandleDeleteUser() {
-  const btn = document.getElementById('adm-del-confirm-btn');
-  btn.disabled = true;
-  try {
-    const res  = await fetch(`${ADM_API}/admin/users/${admTargetUserId}`, { method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({admin_email:_session.email,admin_token:_session.token}) });
-    const data = await res.json();
-    if (data.success) { admCloseModal('adm-del-modal'); admShowToast('User deleted.','success'); await admLoadUsers(); }
-    else { admShowToast(data.message||'Delete failed.','error'); admCloseModal('adm-del-modal'); }
-  } catch { admShowToast('Cannot reach server.','error'); }
-  finally { btn.disabled = false; }
-}
-
-// ── Helpers ─────────────────────────────────────────────
-function admTogglePw(id) { const inp=document.getElementById(id); inp.type=inp.type==='password'?'text':'password'; }
-
-function admShowToast(msg, type='success') {
-  const c = document.getElementById('adm-toast-container');
-  const t = document.createElement('div');
-  t.style.cssText = `padding:12px 18px;border-radius:10px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;max-width:320px;box-shadow:0 8px 24px rgba(0,0,0,.15);animation:admSlideUp .2s ease;`;
-  t.style.cssText += type==='success' ? 'background:#F0FDF4;border:1px solid rgba(22,163,74,.3);color:#15803D;' : 'background:#FEF2F2;border:1px solid rgba(220,38,38,.3);color:#B91C1C;';
-  t.textContent = (type==='success'?'✅ ':'❌ ') + msg;
-  c.appendChild(t);
-  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 3500);
-}
-
-// Close modals on overlay click
-['adm-user-modal','adm-pw-modal','adm-del-modal'].forEach(id => {
-  document.getElementById(id).addEventListener('click', e => { if(e.target===document.getElementById(id)) admCloseModal(id); });
-});
-</script>
-
 </body>
 </html>
