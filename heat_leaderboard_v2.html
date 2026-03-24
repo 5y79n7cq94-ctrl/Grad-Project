@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Macau Analytics · Heat Leaderboard</title>
+<style>
+:root{
+  --bg1:#F6F8FC;--bg2:#EEF2F8;--border:rgba(17,24,39,0.10);--text:#0F172A;
+  --muted:rgba(15,23,42,0.60);--muted2:rgba(15,23,42,0.40);
+  --brand:#2563EB;--brand2:#16A34A;--warn:#EA580C;--danger:#DC2626;
+  --cardShadow:0 4px 16px rgba(15,23,42,0.06);--panelBorder:rgba(15,23,42,0.08);
+  --font:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);color:var(--text);min-height:100vh;
+  background:radial-gradient(900px 520px at 18% 10%,rgba(37,99,235,0.09),transparent 60%),
+    radial-gradient(700px 480px at 88% 18%,rgba(22,163,74,0.07),transparent 55%),
+    linear-gradient(180deg,var(--bg1) 0%,var(--bg2) 100%);}
+
+/* Nav */
+.nav{max-width:1280px;margin:28px auto 0;padding:14px 20px;width:calc(100% - 40px);
+  border:1px solid var(--border);background:rgba(255,255,255,0.80);border-radius:24px;
+  box-shadow:0 12px 30px rgba(15,23,42,0.06);display:flex;align-items:center;justify-content:space-between;gap:14px;}
+.nav-brand{display:flex;align-items:center;gap:12px;}
+.nav-logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,var(--brand),var(--brand2));
+  display:grid;place-items:center;color:#fff;font-weight:800;font-size:13px;flex:0 0 auto;}
+.nav-title{font-size:15px;font-weight:700;}
+.nav-sub{font-size:13px;font-weight:500;color:var(--muted);margin-left:4px;}
+.nav-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.nav-link{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:20px;
+  font-size:12px;font-weight:650;text-decoration:none;white-space:nowrap;transition:.15s;border:1px solid;}
+.nl-blue{background:rgba(37,99,235,0.10);border-color:rgba(37,99,235,0.22);color:#1D4ED8;}
+.nl-blue:hover{background:rgba(37,99,235,0.18);}
+.nav-meta{font-size:11.5px;font-weight:500;color:var(--muted);background:rgba(37,99,235,0.07);
+  padding:5px 12px;border-radius:20px;border:1px solid rgba(37,99,235,0.12);white-space:nowrap;}
+
+/* Layout */
+.wrapper{max-width:1280px;margin:20px auto 60px;padding:0 20px;}
+.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px;margin-top:24px;flex-wrap:wrap;}
+.page-title{font-size:22px;font-weight:750;letter-spacing:.2px;}
+.pill-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:999px;
+  font-size:11.5px;font-weight:650;border:1px solid;white-space:nowrap;user-select:none;}
+.p-blue{background:rgba(37,99,235,0.10);color:#1D4ED8;border-color:rgba(37,99,235,0.20);}
+.p-orange{background:rgba(234,88,12,0.10);color:#C2410C;border-color:rgba(234,88,12,0.22);}
+.p-green{background:rgba(22,163,74,0.10);color:#15803D;border-color:rgba(22,163,74,0.22);}
+.p-gray{background:rgba(15,23,42,0.06);color:var(--muted);border-color:rgba(15,23,42,0.12);}
+
+.op-layout{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;}
+@media(max-width:1050px){.op-layout{grid-template-columns:1fr;}}
+
+.sec-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;margin-top:36px;}
+.sec-title{font-size:16px;font-weight:750;}
+.sec-hint{font-size:11.5px;color:var(--muted2);font-weight:500;}
+.sec-line{flex:1;height:1px;background:linear-gradient(90deg,rgba(15,23,42,0.12),transparent);}
+.report-frame{border:1px solid rgba(15,23,42,0.10);border-radius:28px;
+  background:rgba(255,255,255,0.75);box-shadow:var(--cardShadow);padding:20px;}
+
+/* Tags */
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:999px;
+  font-size:11px;font-weight:600;border:1px solid;white-space:nowrap;}
+.t-op {background:rgba(37,99,235,0.10);border-color:rgba(37,99,235,0.20);color:#1D4ED8;}
+.t-plt{background:rgba(22,163,74,0.10);border-color:rgba(22,163,74,0.22);color:#15803D;}
+.t-cat{background:rgba(139,92,246,0.10);border-color:rgba(139,92,246,0.22);color:#6D28D9;}
+.t-src{background:rgba(234,88,12,0.10);border-color:rgba(234,88,12,0.22);color:#C2410C;}
+
+/* Leaderboard */
+.lb-list{display:flex;flex-direction:column;gap:10px;}
+.lb-wrap{display:flex;flex-direction:column;border-radius:18px;overflow:hidden;
+  border:1px solid var(--panelBorder);box-shadow:var(--cardShadow);}
+.lb-wrap.rk1{border-left:3px solid #F59E0B;}
+.lb-wrap.rk2{border-left:3px solid #94A3B8;}
+.lb-wrap.rk3{border-left:3px solid #CD7F32;}
+.lb-card{background:rgba(255,255,255,0.92);display:grid;grid-template-columns:52px 1fr auto;
+  align-items:stretch;cursor:pointer;transition:background .18s;}
+.lb-card:hover{background:#fff;}
+.lb-rank{display:flex;align-items:center;justify-content:center;
+  background:rgba(15,23,42,0.02);border-right:1px solid var(--panelBorder);}
+.lb-num{font-size:20px;font-weight:750;color:var(--muted);}
+.lb-wrap.rk1 .lb-num{color:#D97706;font-size:26px;}
+.lb-wrap.rk2 .lb-num{color:#64748B;font-size:24px;}
+.lb-wrap.rk3 .lb-num{color:#CD7F32;font-size:22px;}
+.lb-body{padding:14px 18px;min-width:0;}
+.lb-name{font-size:14px;font-weight:700;line-height:1.4;color:var(--text);margin-bottom:3px;
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;}
+.lb-desc{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:7px;
+  display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;}
+.lb-tags{display:flex;align-items:center;flex-wrap:wrap;gap:5px;}
+.lb-score{padding:14px 20px;display:flex;flex-direction:column;align-items:flex-end;
+  justify-content:center;gap:5px;flex-shrink:0;border-left:1px solid var(--panelBorder);min-width:130px;}
+.heat-num{font-size:28px;font-weight:800;line-height:1;
+  background:linear-gradient(135deg,#EA580C,#F59E0B);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.lb-wrap.rk1 .heat-num{font-size:34px;}
+.heat-bar{width:84px;height:5px;border-radius:3px;background:rgba(15,23,42,0.08);overflow:hidden;}
+.heat-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#EA580C,#F59E0B);}
+.decay-lbl{font-size:10.5px;font-weight:600;color:var(--muted2);display:flex;align-items:center;gap:3px;}
+.exp-btn{font-size:10px;font-weight:700;color:var(--brand);background:rgba(37,99,235,0.07);
+  border:1px solid rgba(37,99,235,0.15);border-radius:6px;padding:2px 7px;cursor:pointer;
+  white-space:nowrap;transition:.15s;flex-shrink:0;}
+.exp-btn:hover{background:rgba(37,99,235,0.14);}
+
+/* Inline posts */
+.lb-posts{border-top:1px solid var(--panelBorder);background:rgba(248,250,252,0.95);
+  display:none;flex-direction:column;}
+.lb-posts.open{display:flex;}
+.lb-post{padding:12px 18px;border-bottom:1px solid rgba(15,23,42,0.05);
+  display:flex;flex-direction:column;gap:5px;}
+.lb-post:last-child{border-bottom:none;}
+.post-head{display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.post-body{font-size:12px;color:var(--muted);line-height:1.6;}
+.post-link{font-size:11px;color:var(--brand);font-weight:600;text-decoration:none;}
+.post-link:hover{text-decoration:underline;}
+.post-note{padding:9px 18px;font-size:11px;color:var(--muted2);
+  background:rgba(37,99,235,0.04);border-top:1px solid rgba(37,99,235,0.08);}
+.plt-badge{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+.plt-xhs{background:rgba(239,68,68,0.10);color:#B91C1C;}
+.plt-ig{background:rgba(236,72,153,0.10);color:#9D174D;}
+.plt-fb{background:rgba(37,99,235,0.10);color:#1D4ED8;}
+.plt-weibo{background:rgba(234,88,12,0.10);color:#C2410C;}
+.plt-{background:rgba(15,23,42,0.06);color:var(--muted);}
+.post-date{font-size:11px;color:var(--muted2);font-weight:500;}
+
+/* Category tabs */
+.cat-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;}
+.cat-tab{padding:7px 16px;border-radius:20px;font-size:12.5px;font-weight:600;cursor:pointer;
+  border:1px solid var(--panelBorder);background:rgba(255,255,255,0.85);color:var(--muted);
+  transition:.15s;user-select:none;display:flex;align-items:center;gap:5px;}
+.cat-tab:hover{border-color:rgba(37,99,235,0.25);color:var(--brand);}
+.cat-tab.active{background:rgba(37,99,235,0.10);border-color:rgba(37,99,235,0.28);color:var(--brand);font-weight:700;}
+.cat-panel{display:none;}
+.cat-panel.active{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+@media(max-width:900px){.cat-panel.active{grid-template-columns:1fr 1fr;}}
+@media(max-width:580px){.cat-panel.active{grid-template-columns:1fr;}}
+
+/* Category cards */
+.cat-card{background:rgba(255,255,255,0.92);border:1px solid var(--panelBorder);border-radius:18px;
+  box-shadow:var(--cardShadow);overflow:hidden;cursor:pointer;display:flex;flex-direction:column;
+  transition:box-shadow .18s,border-color .18s,transform .18s;}
+.cat-card:hover{box-shadow:0 10px 28px rgba(15,23,42,0.12);border-color:rgba(37,99,235,0.22);transform:translateY(-2px);}
+.cat-top{padding:12px 14px 10px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--panelBorder);background:rgba(15,23,42,0.025);}
+.cat-rank{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;
+  font-size:12px;font-weight:800;flex-shrink:0;}
+.cr1{background:rgba(245,158,11,0.14);color:#B45309;border:1.5px solid rgba(245,158,11,0.30);}
+.cr2{background:rgba(100,116,139,0.12);color:#475569;border:1.5px solid rgba(100,116,139,0.25);}
+.cr3{background:rgba(180,100,50,0.12);color:#7C2D12;border:1.5px solid rgba(180,100,50,0.25);}
+.cat-heat{font-size:22px;font-weight:800;background:linear-gradient(135deg,#EA580C,#F59E0B);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.cat-body{padding:12px 14px;flex:1;display:flex;flex-direction:column;gap:6px;}
+.cat-name{font-size:13px;font-weight:700;line-height:1.45;color:var(--text);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.cat-desc{font-size:12px;color:var(--muted);line-height:1.5;flex:1;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.cat-meta{display:flex;flex-wrap:wrap;gap:5px;}
+.cat-inline{border-top:1px solid rgba(37,99,235,0.10);background:rgba(248,250,255,0.95);
+  display:none;flex-direction:column;gap:6px;padding:10px 14px;}
+.cat-inline.open{display:flex;}
+.ci-post{background:#fff;border:1px solid var(--panelBorder);border-radius:9px;
+  padding:9px 11px;display:flex;flex-direction:column;gap:4px;}
+.ci-head{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.ci-body{font-size:11.5px;color:var(--muted);line-height:1.55;}
+.ci-link{font-size:11px;color:var(--brand);font-weight:600;text-decoration:none;}
+.ci-link:hover{text-decoration:underline;}
+.no-data{grid-column:1/-1;padding:48px;text-align:center;color:var(--muted2);font-size:13px;}
+
+/* Right panel */
+.right-panel{border:1px solid var(--border);border-radius:24px;background:rgba(255,255,255,0.82);
+  box-shadow:var(--cardShadow);overflow:hidden;position:sticky;top:20px;}
+.rp-tabs{display:flex;border-bottom:1px solid var(--border);background:rgba(15,23,42,0.02);}
+.rp-tab{flex:1;padding:11px 6px;font-size:11px;font-weight:650;cursor:pointer;border:none;
+  background:transparent;color:var(--muted);transition:.15s;display:flex;align-items:center;
+  justify-content:center;gap:4px;border-bottom:2px solid transparent;margin-bottom:-1px;}
+.rp-tab:hover{color:var(--text);}
+.rp-tab.active{color:var(--brand);border-bottom-color:var(--brand);}
+.rp-body{display:none;padding:14px;}
+.rp-body.active{display:block;}
+.rp-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted2);margin-bottom:10px;}
+
+/* Mini lb */
+.mini-lb{display:flex;flex-direction:column;gap:6px;}
+.mini-card{display:grid;grid-template-columns:24px 1fr auto;gap:8px;align-items:center;
+  padding:8px 10px;border-radius:11px;background:rgba(255,255,255,0.85);
+  border:1px solid var(--panelBorder);cursor:pointer;transition:.15s;}
+.mini-card:hover{border-color:rgba(37,99,235,0.25);background:#fff;}
+.mini-rnk{font-size:12px;font-weight:800;color:var(--muted2);text-align:center;}
+.mr1{color:#D97706;}.mr2{color:#64748B;}.mr3{color:#CD7F32;}
+.mini-name{font-size:11.5px;font-weight:600;line-height:1.35;color:var(--text);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.mini-score{font-size:13px;font-weight:800;background:linear-gradient(135deg,#EA580C,#F59E0B);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap;}
+.see-all{display:block;text-align:center;font-size:11.5px;font-weight:650;color:var(--brand);
+  margin-top:10px;cursor:pointer;padding:6px;border-radius:8px;transition:.15s;}
+.see-all:hover{background:rgba(37,99,235,0.07);}
+
+/* Formula */
+.formula-box{background:rgba(37,99,235,0.04);border:1px solid rgba(37,99,235,0.12);
+  border-radius:14px;padding:14px;font-size:12px;line-height:1.65;color:rgba(15,23,42,0.72);}
+.f-step{display:flex;gap:8px;margin-bottom:9px;align-items:flex-start;}
+.f-step:last-child{margin-bottom:0;}
+.f-num{width:20px;height:20px;border-radius:50%;background:rgba(37,99,235,0.12);color:var(--brand);
+  font-size:10px;font-weight:800;display:grid;place-items:center;flex-shrink:0;margin-top:1px;}
+.f-code{display:block;font-family:monospace;font-size:11px;background:rgba(15,23,42,0.05);
+  padding:5px 9px;border-radius:7px;margin-top:4px;color:rgba(15,23,42,0.72);line-height:1.5;}
+
+/* Refresh */
+.refresh-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;
+  padding:9px 14px;border-radius:10px;font-size:12px;font-weight:650;margin-top:12px;cursor:pointer;
+  background:rgba(22,163,74,0.10);border:1px solid rgba(22,163,74,0.22);color:#15803D;transition:.15s;}
+.refresh-btn:hover{background:rgba(22,163,74,0.18);}
+.refresh-btn:disabled{opacity:.5;cursor:wait;}
+
+/* Stats */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.stat-card{background:rgba(255,255,255,0.85);border:1px solid var(--panelBorder);border-radius:12px;padding:10px 12px;}
+.s-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted2);margin-bottom:3px;}
+.s-val{font-size:18px;font-weight:800;line-height:1;color:var(--text);}
+.s-val.h{background:linear-gradient(135deg,#EA580C,#F59E0B);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+
+/* Loading / error */
+.loading-state{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:60px 20px;color:var(--muted2);}
+.spinner{width:36px;height:36px;border:3px solid rgba(37,99,235,0.15);border-top-color:var(--brand);border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.error-box{padding:20px;border-radius:14px;background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.15);color:#B91C1C;font-size:13px;text-align:center;}
+
+/* Drawer */
+.drawer-overlay{position:fixed;inset:0;z-index:200;background:rgba(15,23,42,0.30);backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .25s;}
+.drawer-overlay.open{opacity:1;pointer-events:all;}
+.drawer{position:fixed;top:0;right:0;bottom:0;z-index:201;width:min(520px,100vw);background:var(--bg1);
+  border-left:1px solid var(--border);box-shadow:-20px 0 60px rgba(15,23,42,0.14);
+  display:flex;flex-direction:column;transform:translateX(100%);transition:transform .28s cubic-bezier(0.22,1,0.36,1);}
+.drawer.open{transform:translateX(0);}
+.d-head{padding:18px 20px;border-bottom:1px solid var(--border);background:rgba(255,255,255,0.92);
+  display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-shrink:0;}
+.d-title{font-size:15px;font-weight:750;line-height:1.4;}
+.d-close{width:32px;height:32px;border-radius:10px;border:none;cursor:pointer;
+  background:rgba(15,23,42,0.07);color:var(--muted);font-size:16px;display:grid;place-items:center;transition:.15s;}
+.d-close:hover{background:rgba(220,38,38,0.10);color:#B91C1C;}
+.d-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;padding:14px 20px;
+  border-bottom:1px solid var(--border);background:rgba(255,255,255,0.65);flex-shrink:0;}
+.dstat{background:rgba(255,255,255,0.90);border:1px solid var(--panelBorder);border-radius:14px;padding:10px 12px;}
+.dstat-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.45px;color:var(--muted2);margin-bottom:3px;}
+.dstat-val{font-size:22px;font-weight:800;line-height:1.1;}
+.dstat-val.h{background:linear-gradient(135deg,#EA580C,#F59E0B);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-size:26px;}
+.d-meta{padding:10px 20px;border-bottom:1px solid var(--border);background:rgba(255,255,255,0.55);display:flex;flex-wrap:wrap;gap:6px;flex-shrink:0;}
+.d-body{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;}
+.src-post{background:rgba(255,255,255,0.95);border:1px solid var(--panelBorder);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;}
+.src-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.src-body{font-size:12.5px;color:rgba(15,23,42,0.72);line-height:1.65;display:-webkit-box;-webkit-line-clamp:6;-webkit-box-orient:vertical;overflow:hidden;}
+.src-link{font-size:11.5px;font-weight:650;color:var(--brand);text-decoration:none;display:inline-flex;align-items:center;gap:3px;}
+.src-link:hover{text-decoration:underline;}
+.d-note{background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.14);border-radius:14px;padding:13px 16px;font-size:12.5px;color:rgba(15,23,42,0.65);line-height:1.6;}
+.d-note strong{color:var(--brand);}
+
+@media(max-width:700px){.nav{margin:14px auto 0;width:calc(100% - 24px);}.wrapper{padding:0 12px;}}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="nav-brand">
+    <div class="nav-logo">MA</div>
+    <span class="nav-title">Macau Analytics</span>
+    <span class="nav-sub">· Heat Leaderboard</span>
+  </div>
+  <div class="nav-right">
+    <a id="opPanelLink" href="./operation_panel.html" class="nav-link nl-blue">📊 Operation Panel</a>
+    <span class="nav-meta" id="nav-meta">Loading…</span>
+  </div>
+</div>
+
+<div class="wrapper">
+  <div class="page-head">
+    <h1 class="page-title">🔥 Activity Heat Leaderboard</h1>
+    <div class="pill-row">
+      <span class="pill p-blue">🌐 Cross-platform</span>
+      <span class="pill p-orange">📅 Time-decay adjusted</span>
+      <span class="pill p-gray" id="cachePill">⏳ Loading…</span>
+    </div>
+  </div>
+
+  <div class="op-layout">
+    <!-- Left -->
+    <div>
+      <div class="sec-head">
+        <span class="sec-title">🏆 Global Top 10</span>
+        <span class="sec-hint">Click a card to expand source posts · click again to collapse</span>
+        <div class="sec-line"></div>
+      </div>
+      <div class="report-frame">
+        <div class="lb-list" id="lb-list">
+          <div class="loading-state"><div class="spinner"></div><span>Fetching heat data…</span></div>
+        </div>
+      </div>
+
+      <div class="sec-head">
+        <span class="sec-title">📂 Top 3 by Category</span>
+        <span class="sec-hint">Dynamically fetched · sorted by AI-aggregated heat score</span>
+        <div class="sec-line"></div>
+      </div>
+      <div class="report-frame">
+        <div class="cat-tabs" id="cat-tabs"></div>
+        <div id="cat-panels">
+          <div class="loading-state"><div class="spinner"></div><span>Loading categories…</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right -->
+    <div class="right-panel">
+      <div class="rp-tabs">
+        <button class="rp-tab active" data-tab="top5" onclick="switchTab('top5')">🔥 Top 5</button>
+        <button class="rp-tab" data-tab="stats" onclick="switchTab('stats')">📊 Stats</button>
+        <button class="rp-tab" data-tab="how" onclick="switchTab('how')">ℹ️ How</button>
+      </div>
+
+      <div class="rp-body active" id="rp-top5">
+        <div class="rp-lbl">Live Top 5</div>
+        <div class="mini-lb" id="mini-lb">
+          <div style="height:160px;border-radius:10px;background:linear-gradient(90deg,rgba(15,23,42,0.06) 25%,rgba(15,23,42,0.03) 50%,rgba(15,23,42,0.06) 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;"></div>
+        </div>
+        <span class="see-all" onclick="document.getElementById('lb-list').scrollIntoView({behavior:'smooth'})">View full Top 10 ↓</span>
+        <button class="refresh-btn" id="refreshBtn" onclick="triggerRefresh()">🔄 Refresh AI Analysis</button>
+        <p id="refreshNote" style="display:none;font-size:10.5px;color:var(--muted2);margin-top:8px;text-align:center;line-height:1.5;">
+          Re-runs DeepSeek activity extraction and updates the DB cache. Takes ~60s.
+        </p>
+      </div>
+
+      <div class="rp-body" id="rp-stats">
+        <div class="rp-lbl">Summary Statistics</div>
+        <div id="stats-content"><div style="height:160px;background:rgba(15,23,42,0.04);border-radius:10px;"></div></div>
+      </div>
+
+      <div class="rp-body" id="rp-how">
+        <div class="rp-lbl">How Heat Score Works</div>
+        <div class="formula-box">
+          <div class="f-step">
+            <div class="f-num">1</div>
+            <div><strong>Per-post Engagement Score</strong> — PCA-weighted log engagement (likes, comments, shares, views) scaled by account followers.
+              <code class="f-code">post_score = PCA(log1p(engagement)) × log1p(followers)</code>
+            </div>
+          </div>
+          <div class="f-step">
+            <div class="f-num">2</div>
+            <div><strong>Event Group Score</strong> — posts about the same event are deduplicated into a group. Score = average post score × log(post count + 1).
+              <code class="f-code">raw = avg(post_scores) × log1p(n_posts)</code>
+            </div>
+          </div>
+          <div class="f-step">
+            <div class="f-num">3</div>
+            <div><strong>Time Decay</strong> — recency matters. Heat decays with a 14-day half-life from the newest post date.
+              <code class="f-code">decay = exp(−ln2 / 14 × days_since_newest)</code>
+            </div>
+          </div>
+          <div class="f-step">
+            <div class="f-num">4</div>
+            <div><strong>Normalise 0–100</strong> — log-compress extreme values, then min-max scale all events.
+              <code class="f-code">heat = minmax(log1p(raw × decay)) × 100</code>
+            </div>
+          </div>
+          <div class="f-step">
+            <div class="f-num">5</div>
+            <div><strong>AI Activity Aggregation</strong> — one AI-extracted activity may span multiple event groups. Final heat = source-count–weighted average of constituent group scores.</div>
+          </div>
+        </div>
+        <p style="margin-top:10px;font-size:11px;color:var(--muted2);line-height:1.6;">
+          PCA weights are re-fitted from live data each time <code style="background:rgba(15,23,42,0.06);padding:1px 4px;border-radius:4px;font-family:monospace;">heat_analyzer.py</code> runs. Scores are cached in the DB — use <em>Refresh AI Analysis</em> to rebuild.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Drawer -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div class="d-head">
+    <div class="d-title" id="dTitle">—</div>
+    <button class="d-close" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="d-stats" id="dStats"></div>
+  <div class="d-meta" id="dMeta"></div>
+  <div class="d-body" id="dBody"></div>
+</div>
+
+<style>@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}</style>
+
+<script>
+// ── Config ───────────────────────────────────────────────────────────────────
+const API_BASE       = 'http://127.0.0.1:9038';
+const API_AI         = `${API_BASE}/api/heat/leaderboard-ai`;
+const API_AI_REFRESH = `${API_BASE}/api/heat/leaderboard-ai/refresh`;
+const API_RAW        = `${API_BASE}/api/heat/leaderboard?top=10`;
+
+// ── Session passthrough ──────────────────────────────────────────────────────
+// Preserve session URL params when navigating back to Operation Panel
+(function(){
+  const sp = new URLSearchParams(window.location.search);
+  if(sp.get('first_name')){
+    document.getElementById('opPanelLink').href = './operation_panel.html?' + sp.toString();
+  }
+})();
+
+// ── State ────────────────────────────────────────────────────────────────────
+let TOP10 = [], BY_CAT = {}, CAT_KEYS = [];
+
+// ── Labels ───────────────────────────────────────────────────────────────────
+const CAT_LABELS = {
+  accommodation:'🏨 Accommodation',concert:'🎤 Concert',crossover:'🌐 Crossover',
+  entertainment:'🎭 Entertainment',exhibition:'🖼 Exhibition',experience:'✨ Experience',
+  food:'🍜 Food',gaming:'🎰 Gaming',shopping:'🛍 Shopping',sport:'⚽ Sport',
+};
+const OP_LABELS  = {melco:'Melco',sands:'Sands',wynn:'Wynn',galaxy:'Galaxy',mgm:'MGM',sjm:'SJM',government:'Gov',others:'Others'};
+const PLT_LABELS = {fb:'FB',ig:'IG',xhs:'XHS',weibo:'Weibo'};
+const PLT_ICONS  = {fb:'📘',ig:'📷',xhs:'📕',weibo:'🐦'};
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function actName(e){
+  if(e.name&&e.name.trim().length>2) return e.name.trim();
+  if(e.ai_name) return e.ai_name;
+  const m=(e.content||e.description||'').match(/【([^】]{4,40})】/);
+  if(m) return m[1];
+  const t=e.content||e.description||'';
+  return t.slice(0,55)+(t.length>55?'…':'');
+}
+function actDesc(e){
+  return(e.description||e.content||'').replace(/【[^】]*】/g,'').replace(/\n+/g,' ').trim();
+}
+function flame(s){return s>=80?'🔥🔥🔥':s>=60?'🔥🔥':s>=35?'🔥':'❄️';}
+function tagOp(op){return`<span class="tag t-op">${OP_LABELS[op]||op}</span>`;}
+function tagPlt(p){return`<span class="tag t-plt">${PLT_ICONS[p]||''}${PLT_LABELS[p]||p}</span>`;}
+function tagCat(c){return`<span class="tag t-cat">${CAT_LABELS[c]||c}</span>`;}
+function tagSrc(n){return`<span class="tag t-src">📊 ${n} posts</span>`;}
+function getCats(e){if(Array.isArray(e.category))return e.category;return(e.category||'').split('|').map(c=>c.trim()).filter(Boolean);}
+function getPlats(e){if(Array.isArray(e.platforms)&&e.platforms.length)return e.platforms;if(e.platform)return[e.platform];return[];}
+function buildUrl(id,plt){
+  const r=(id||'').replace(/^(fb|ig|xhs|weibo)_/,'');
+  return {fb:`https://www.facebook.com/${r}`,ig:`https://www.instagram.com/p/${r}/`,xhs:`https://www.xiaohongshu.com/explore/${r}`,weibo:`https://weibo.com/${r}`}[plt]||null;
+}
+function timeSince(iso){
+  const d=new Date(iso);if(isNaN(d))return'';
+  const m=Math.floor((Date.now()-d)/60000);
+  if(m<1)return'just now';if(m<60)return`${m}m ago`;
+  const h=Math.floor(m/60);if(h<24)return`${h}h ago`;return`${Math.floor(h/24)}d ago`;
+}
+
+// ── Fetch ────────────────────────────────────────────────────────────────────
+async function fetchLeaderboard(){
+  try{
+    let res=await fetch(API_AI);
+    let data=res.ok?await res.json():null;
+    if(!data||!data.success){
+      console.warn('AI endpoint failed, falling back to raw leaderboard');
+      res=await fetch(API_RAW);
+      data=await res.json();
+    }
+    if(!data.success) throw new Error(data.message||'API error');
+    loadData(data);
+  }catch(err){
+    console.error(err);
+    document.getElementById('lb-list').innerHTML=
+      `<div class="error-box">⚠️ Cannot reach API (${err.message})<br>Ensure bridge.py is running on :9038<br>
+       <button onclick="loadDemo()" style="margin-top:10px;padding:5px 14px;border:1px solid #B91C1C;background:rgba(220,38,38,0.08);color:#B91C1C;border-radius:8px;cursor:pointer;font-size:12px;">Load Demo Data</button></div>`;
+    document.getElementById('cat-tabs').innerHTML='';
+    document.getElementById('cat-panels').innerHTML=`<div class="error-box">API offline</div>`;
+    document.getElementById('nav-meta').textContent='API Offline';
+    document.getElementById('cachePill').textContent='❌ Offline';
+    document.getElementById('cachePill').className='pill p-gray';
+  }
+}
+
+function loadData(data){
+  TOP10=data.top_overall||[];
+  BY_CAT=data.by_category||{};
+  CAT_KEYS=data.categories||Object.keys(BY_CAT);
+
+  const pill=document.getElementById('cachePill');
+  if(data.from_cache===true){
+    const ago=data.cached_at?timeSince(data.cached_at):'';
+    pill.textContent=`✅ Cached${ago?' · '+ago:''}`;
+    pill.className='pill p-green';
+  } else {
+    pill.textContent='🔄 Live';
+    pill.className='pill p-orange';
+  }
+  document.getElementById('nav-meta').textContent=`🤖 AI Activities · ${data.total||'?'} events`;
+  renderTop10(); renderCats(); renderMiniLb(); renderStats();
+}
+
+// ── Refresh ──────────────────────────────────────────────────────────────────
+async function triggerRefresh(){
+  const btn=document.getElementById('refreshBtn');
+  const note=document.getElementById('refreshNote');
+  btn.disabled=true; btn.textContent='⏳ Rebuilding… (~60s)';
+  note.style.display='block';
+  document.getElementById('cachePill').textContent='⏳ Refreshing…';
+  document.getElementById('lb-list').innerHTML=
+    `<div class="loading-state"><div class="spinner"></div><span>Running AI extraction + heat aggregation…<br><small>This takes ~60 seconds</small></span></div>`;
+  try{
+    const res=await fetch(API_AI_REFRESH,{method:'POST'});
+    const data=await res.json();
+    if(data.success){ loadData(data); }
+    else { document.getElementById('lb-list').innerHTML=`<div class="error-box">Refresh failed: ${data.message}</div>`; }
+  }catch(e){
+    document.getElementById('lb-list').innerHTML=`<div class="error-box">Refresh error: ${e.message}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent='🔄 Refresh AI Analysis';
+  }
+}
+
+// ── Render Top 10 ────────────────────────────────────────────────────────────
+function renderTop10(){
+  if(!TOP10.length){document.getElementById('lb-list').innerHTML='<div class="no-data">No data available</div>';return;}
+  document.getElementById('lb-list').innerHTML=TOP10.map((e,i)=>{
+    const rnk=i<3?`rk${i+1}`:'';
+    const plats=getPlats(e); const plt=plats[0]||'fb';
+    const wid=`lbw-${i}`;
+    const purl=buildUrl(e.event_id,plt);
+    const srcPosts=Array.isArray(e.source_posts)?e.source_posts.filter(p=>p.url):[];
+
+    const postsHtml=srcPosts.length
+      ?srcPosts.map(p=>`<div class="lb-post">
+          <div class="post-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||'🔗'} ${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
+          <div class="post-body">${(p.title||'').slice(0,200)}</div>
+          <a class="post-link" href="${p.url}" target="_blank" rel="noopener">🔗 View original post ↗</a>
+        </div>`).join('')
+      :`<div class="lb-post">
+          <div class="post-head"><span class="plt-badge plt-${plt}">${PLT_ICONS[plt]||''} ${PLT_LABELS[plt]||plt}</span><span class="post-date">${e.newest_post||''}</span></div>
+          <div class="post-body">${(e.content||e.description||'').slice(0,300)}</div>
+          ${purl?`<a class="post-link" href="${purl}" target="_blank" rel="noopener">🔗 View original post ↗</a>`:''}
+        </div>`;
+
+    return `<div class="lb-wrap ${rnk}" id="${wid}">
+  <div class="lb-card" onclick="toggleExpand('${wid}')">
+    <div class="lb-rank"><span class="lb-num">${i+1}</span></div>
+    <div class="lb-body">
+      <div class="lb-name">${actName(e)}</div>
+      <div class="lb-desc">${actDesc(e)}</div>
+      <div class="lb-tags">
+        ${tagOp(e.operator)}${plats.slice(0,3).map(tagPlt).join('')}${getCats(e).slice(0,2).map(tagCat).join('')}${tagSrc(e.source_count||1)}
+        <span class="exp-btn" id="expbtn-${wid}">▼ Source Posts</span>
+      </div>
+    </div>
+    <div class="lb-score">
+      <div class="heat-num">${(e.heat_score||0).toFixed(1)}</div>
+      <div class="heat-bar"><div class="heat-fill" style="width:${Math.min(e.heat_score||0,100)}%"></div></div>
+      <div class="decay-lbl">${flame(e.heat_score||0)} decay ${((e.decay_factor||1)*100).toFixed(0)}%</div>
+    </div>
+  </div>
+  <div class="lb-posts" id="posts-${wid}">
+    ${postsHtml}
+    ${(e.source_count||0)>1?`<div class="post-note">📊 This activity has <strong>${e.source_count}</strong> source posts across ${e.platform_count||plats.length} platform(s)</div>`:''}
+  </div>
+</div>`;
+  }).join('');
+}
+
+function toggleExpand(wid){
+  const el=document.getElementById('posts-'+wid);
+  const btn=document.getElementById('expbtn-'+wid);
+  if(!el)return;
+  const open=el.classList.toggle('open');
+  if(btn)btn.textContent=open?'▲ Collapse':'▼ Source Posts';
+}
+
+// ── Render Categories ────────────────────────────────────────────────────────
+function renderCats(){
+  const cats=CAT_KEYS.filter(c=>BY_CAT[c]&&BY_CAT[c].length>0);
+  if(!cats.length){
+    document.getElementById('cat-tabs').innerHTML='';
+    document.getElementById('cat-panels').innerHTML='<div class="no-data">No category data available</div>';
+    return;
+  }
+  document.getElementById('cat-tabs').innerHTML=cats.map((cat,i)=>`
+    <button class="cat-tab${i===0?' active':''}" data-cat="${cat}" onclick="switchCat('${cat}')">
+      ${CAT_LABELS[cat]||cat} <span style="opacity:.5;font-size:10px;">${(BY_CAT[cat]||[]).length}</span>
+    </button>`).join('');
+
+  document.getElementById('cat-panels').innerHTML=cats.map((cat,i)=>{
+    const items=BY_CAT[cat]||[];
+    const rnkCls=['cr1','cr2','cr3'];
+    const cards=items.length?items.map((e,j)=>{
+      const plats=getPlats(e);const plt=plats[0]||'fb';const purl=buildUrl(e.event_id,plt);
+      const cid=`cc-${cat}-${j}`;
+      const srcPosts=Array.isArray(e.source_posts)?e.source_posts.filter(p=>p.url):[];
+      const inlineHtml=srcPosts.length
+        ?srcPosts.slice(0,2).map(p=>`<div class="ci-post">
+            <div class="ci-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||''}${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
+            <div class="ci-body">${(p.title||'').slice(0,150)}</div>
+            <a class="ci-link" href="${p.url}" target="_blank" rel="noopener">🔗 View post ↗</a>
+          </div>`).join('')
+        :`<div class="ci-post">
+            <div class="ci-head"><span class="plt-badge plt-${plt}">${PLT_ICONS[plt]||''}${PLT_LABELS[plt]||plt}</span><span class="post-date">${e.newest_post||''}</span></div>
+            <div class="ci-body">${(e.content||e.description||'').slice(0,200)}</div>
+            ${purl?`<a class="ci-link" href="${purl}" target="_blank" rel="noopener">🔗 View post ↗</a>`:''}
+          </div>`;
+      return `<div class="cat-card" id="${cid}">
+  <div class="cat-top" onclick="toggleCatInline('${cid}')">
+    <div class="cat-rank ${rnkCls[j]||'cr3'}">${j+1}</div>
+    <div class="cat-heat">${(e.heat_score||0).toFixed(1)}</div>
+  </div>
+  <div class="cat-body" onclick="toggleCatInline('${cid}')">
+    <div class="cat-name">${actName(e)}</div>
+    <div class="cat-desc">${actDesc(e)}</div>
+    <div class="cat-meta">${tagOp(e.operator)}${plats.slice(0,2).map(tagPlt).join('')}${tagSrc(e.source_count||1)}</div>
+  </div>
+  <div class="cat-inline" id="ci-${cid}">${inlineHtml}</div>
+</div>`;
+    }).join(''):`<div class="no-data">No data for this category</div>`;
+    return `<div class="cat-panel${i===0?' active':''}" id="panel-${cat}">${cards}</div>`;
+  }).join('');
+}
+
+function toggleCatInline(id){const el=document.getElementById('ci-'+id);if(el)el.classList.toggle('open');}
+function switchCat(cat){
+  document.querySelectorAll('.cat-tab').forEach(t=>t.classList.toggle('active',t.dataset.cat===cat));
+  document.querySelectorAll('.cat-panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+cat));
+}
+
+// ── Mini lb ──────────────────────────────────────────────────────────────────
+function renderMiniLb(){
+  document.getElementById('mini-lb').innerHTML=TOP10.slice(0,5).map((e,i)=>{
+    const rc=i<3?`mr${i+1}`:'';
+    return `<div class="mini-card" onclick='openDrawer(${JSON.stringify(e).replace(/"/g,"&quot;")})'>
+  <div class="mini-rnk ${rc}">${i+1}</div>
+  <div class="mini-name">${actName(e)}</div>
+  <div class="mini-score">${(e.heat_score||0).toFixed(1)}</div>
+</div>`;
+  }).join('');
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+function renderStats(){
+  if(!TOP10.length)return;
+  const avg=(TOP10.reduce((s,e)=>s+(e.heat_score||0),0)/TOP10.length).toFixed(1);
+  const maxSrc=TOP10.reduce((m,e)=>Math.max(m,e.source_count||0),0);
+  const opCnt={};TOP10.forEach(e=>{opCnt[e.operator]=(opCnt[e.operator]||0)+1;});
+  const topOp=Object.entries(opCnt).sort((a,b)=>b[1]-a[1])[0];
+  const pltCnt={};TOP10.forEach(e=>getPlats(e).forEach(p=>{pltCnt[p]=(pltCnt[p]||0)+1;}));
+  document.getElementById('stats-content').innerHTML=`
+    <div class="stat-grid">
+      <div class="stat-card" style="grid-column:span 2;"><div class="s-lbl">Top 10 Avg Heat</div><div class="s-val h">${avg}</div></div>
+      <div class="stat-card"><div class="s-lbl">Max Sources</div><div class="s-val">${maxSrc}</div></div>
+      <div class="stat-card"><div class="s-lbl">Top Operator</div><div class="s-val" style="font-size:13px;">${OP_LABELS[topOp?.[0]]||topOp?.[0]||'—'}</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--muted2);margin-top:10px;line-height:1.6;">
+      Platforms: ${Object.entries(pltCnt).map(([p,n])=>`${PLT_ICONS[p]||''}${PLT_LABELS[p]||p}×${n}`).join(' · ')}
+    </div>`;
+}
+
+// ── Tab switch ───────────────────────────────────────────────────────────────
+function switchTab(tab){
+  document.querySelectorAll('.rp-tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
+  document.querySelectorAll('.rp-body').forEach(b=>b.classList.toggle('active',b.id==='rp-'+tab));
+}
+
+// ── Drawer ───────────────────────────────────────────────────────────────────
+function openDrawer(e){
+  if(typeof e==='string')e=JSON.parse(e);
+  const plats=getPlats(e);const plt=plats[0]||'fb';const cats=getCats(e);
+  document.getElementById('dTitle').textContent=actName(e);
+  document.getElementById('dStats').innerHTML=`
+    <div class="dstat"><div class="dstat-lbl">Heat Score</div><div class="dstat-val h">${(e.heat_score||0).toFixed(1)}</div></div>
+    <div class="dstat"><div class="dstat-lbl">Source Posts</div><div class="dstat-val">${e.source_count||1}</div></div>
+    <div class="dstat"><div class="dstat-lbl">Time Decay</div><div class="dstat-val">${((e.decay_factor||1)*100).toFixed(0)}%</div></div>`;
+  document.getElementById('dMeta').innerHTML=
+    tagOp(e.operator)+plats.map(tagPlt).join('')+cats.map(tagCat).join('')+
+    `<span class="tag" style="background:rgba(15,23,42,0.05);border-color:rgba(15,23,42,0.10);color:var(--muted2);">📅 ${e.newest_post||'—'}</span>`;
+  const purl=buildUrl(e.event_id,plt);
+  const srcPosts=Array.isArray(e.source_posts)?e.source_posts.filter(p=>p.url):[];
+  const postsHtml=srcPosts.length
+    ?srcPosts.map(p=>`<div class="src-post">
+        <div class="src-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||''} ${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
+        <div class="src-body">${(p.title||'').slice(0,400)}</div>
+        <a class="src-link" href="${p.url}" target="_blank" rel="noopener">🔗 View original post ↗</a>
+      </div>`).join('')
+    :`<div class="src-post">
+        <div class="src-head"><span class="plt-badge plt-${plt}">${PLT_ICONS[plt]||''} ${PLT_LABELS[plt]||plt}</span><span class="post-date">${e.newest_post||e.published_at||'—'}</span></div>
+        <div class="src-body">${(e.content||e.description||'').slice(0,400)}</div>
+        ${purl?`<a class="src-link" href="${purl}" target="_blank" rel="noopener">🔗 View original post ↗</a>`:''}
+      </div>`;
+  document.getElementById('dBody').innerHTML=`
+    <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted2);">Representative Post</div>
+    ${postsHtml}
+    ${(e.source_count||0)>1?`<div class="d-note"><strong>📊 ${e.source_count} source posts</strong> across ${e.platform_count||plats.length} platform(s) (${plats.map(p=>PLT_LABELS[p]).join(', ')}).</div>`:''}
+    <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted2);">Platform Coverage</div>
+    ${plats.map(p=>`<div style="background:rgba(255,255,255,0.85);border:1px solid var(--panelBorder);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px;">
+      <span class="plt-badge plt-${p}">${PLT_ICONS[p]||''} ${PLT_LABELS[p]||p}</span>
+      <span style="font-size:12px;color:var(--muted);flex:1;">Included in event group</span>
+      <span class="tag t-src" style="font-size:10px;">✓</span>
+    </div>`).join('')}`;
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawerOverlay').classList.remove('open');
+  document.body.style.overflow='';
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+
+// ── Demo ─────────────────────────────────────────────────────────────────────
+function loadDemo(){
+  const d={success:true,total:5,from_cache:false,
+    categories:['concert','sport','food','experience'],
+    top_overall:[
+      {heat_score:100,name:"City of Dreams Relaunch — Be A Dreamer",description:"Immersive brand chapter with art installations, cultural experiences and luxury redefined.",platforms:["fb","weibo","xhs"],platform_count:3,decay_factor:0.74,newest_post:"2026-03-17",category:"experience",operator:"melco",source_count:27,event_id:"fb_1427956646026599"},
+      {heat_score:91.1,name:"House of Dancing Water — Backstage",description:"Backstage look at the iconic show featuring Princess Anne and Tai Chi choreography.",platforms:["weibo","xhs"],platform_count:2,decay_factor:0.80,newest_post:"2026-03-19",category:"concert",operator:"melco",source_count:9,event_id:"weibo_5262931032019201"},
+      {heat_score:88.8,name:"G Bear Café — Lucky New Year Edition",description:"Limited New Year desserts and exclusive in-resort offers at Sands.",platforms:["weibo","xhs"],platform_count:2,decay_factor:0.81,newest_post:"2026-03-19",category:"food",operator:"sands",source_count:15,event_id:"weibo_5268717379518893"},
+      {heat_score:83.3,name:"SONDAY Skate Park Festival × adidas",description:"Macau's first figure-8 dual bowl skate park at Studio City powered by adidas.",platforms:["fb","weibo","xhs"],platform_count:3,decay_factor:0.70,newest_post:"2026-03-16",category:"sport",operator:"melco",source_count:9,event_id:"fb_1222127733463001"},
+      {heat_score:81.9,name:"MUSIC UNBOUNDED LIVE — MIRROR",description:"MIRROR members reunite for two exclusive Easter holiday concert shows.",platforms:["fb","ig","weibo","xhs"],platform_count:4,decay_factor:0.73,newest_post:"2026-03-17",category:"concert",operator:"melco",source_count:6,event_id:"fb_1233067522369022"},
+    ],
+    by_category:{
+      concert:[{heat_score:91.1,name:"House of Dancing Water — Backstage",description:"Iconic show.",platforms:["weibo","xhs"],decay_factor:0.80,newest_post:"2026-03-19",operator:"melco",source_count:9,event_id:"weibo_5262931032019201"}],
+      sport:[{heat_score:83.3,name:"SONDAY Skate Park × adidas",description:"First figure-8 skate park.",platforms:["fb","weibo","xhs"],decay_factor:0.70,newest_post:"2026-03-16",operator:"melco",source_count:9,event_id:"fb_1222127733463001"}],
+      food:[{heat_score:88.8,name:"G Bear Café — Lucky New Year",description:"Limited desserts.",platforms:["weibo","xhs"],decay_factor:0.81,newest_post:"2026-03-19",operator:"sands",source_count:15,event_id:"weibo_5268717379518893"}],
+      experience:[{heat_score:100,name:"City of Dreams — Be A Dreamer",description:"Brand relaunch.",platforms:["fb","weibo","xhs"],decay_factor:0.74,newest_post:"2026-03-17",operator:"melco",source_count:27,event_id:"fb_1427956646026599"}],
+    }};
+  loadData(d);
+  document.getElementById('nav-meta').textContent='Demo Mode · Static Data';
+  document.getElementById('cachePill').textContent='📦 Demo';
+  document.getElementById('cachePill').className='pill p-gray';
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+fetchLeaderboard();
+</script>
+</body>
+</html>

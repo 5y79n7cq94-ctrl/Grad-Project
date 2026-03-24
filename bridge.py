@@ -1059,6 +1059,71 @@ Category 判斷規則：
             ids = act.get("source_post_ids") or []
             act["source_posts"] = [post_details[i] for i in ids if i in post_details]
 
+    # ── Attach heat_score to every AI activity (aggregate from events_deduped) ─
+    # source_post_ids lists events_deduped.event_id values (one deduped group = one row).
+    # For each AI activity we compute a weighted-average heat score across its groups,
+    # weighted by source_count (more source posts → more representative).
+    try:
+        _hconn = _heat_db_conn()
+        _all_ev_ids: set = set()
+        for _acts in cat_summaries.values():
+            for _act in _acts:
+                for _sid in (_act.get("source_post_ids") or []):
+                    _all_ev_ids.add(_sid)
+
+        _heat_map: dict = {}  # event_id → {heat_score, decay_factor, newest_post, platforms, source_count}
+        if _all_ev_ids:
+            _ph = ",".join(["?"] * len(_all_ev_ids))
+            for _row in _hconn.execute(
+                f"SELECT event_id, heat_score, heat_meta, source_count FROM events_deduped WHERE event_id IN ({_ph})",
+                list(_all_ev_ids)
+            ).fetchall():
+                _eid, _hs, _hm_json, _sc = _row
+                _hm = {}
+                try: _hm = json.loads(_hm_json or "{}")
+                except Exception: pass
+                _heat_map[_eid] = {
+                    "heat_score":   float(_hs or 0),
+                    "decay_factor": float(_hm.get("decay_factor", 1.0)),
+                    "newest_post":  _hm.get("newest_post", ""),
+                    "platforms":    _hm.get("platforms", []),
+                    "source_count": _sc or 1,
+                }
+        _hconn.close()
+
+        def _agg_heat(act):
+            rows = [_heat_map[i] for i in (act.get("source_post_ids") or []) if i in _heat_map]
+            if not rows: return None
+            total_sc  = sum(r["source_count"] for r in rows)
+            w_heat    = sum(r["heat_score"] * r["source_count"] for r in rows) / max(total_sc, 1)
+            best_decay = max(r["decay_factor"] for r in rows)
+            newest    = max((r["newest_post"] for r in rows if r["newest_post"]), default="")
+            platforms = sorted({p for r in rows for p in r["platforms"]})
+            return {
+                "heat_score":    round(w_heat, 1),
+                "decay_factor":  round(best_decay, 4),
+                "newest_post":   newest,
+                "platforms":     platforms,
+                "platform_count":len(platforms),
+                "source_count":  sum(r["source_count"] for r in rows),
+            }
+
+        for _acts in cat_summaries.values():
+            for _act in _acts:
+                _h = _agg_heat(_act)
+                if _h:
+                    _act.update(_h)
+                else:
+                    _act.setdefault("heat_score", None)
+
+        # Sort each category by heat_score descending
+        for _cat_key in cat_summaries:
+            cat_summaries[_cat_key].sort(key=lambda a: (a.get("heat_score") or 0), reverse=True)
+
+        print("✅ heat_score attached to all AI activities")
+    except Exception as _he:
+        print(f"⚠️ heat_score attach failed (non-fatal): {_he}")
+
     return {
         "status":             "success",
         "operator_summaries": all_summaries,
@@ -1418,6 +1483,312 @@ async def admin_delete_user(user_id: int, request: Request):
         conn.execute('DELETE FROM users WHERE "User ID"=?', (user_id,))
         conn.commit()
         return {"success": True}
+    finally:
+        conn.close()
+# ══════════════════════════════════════════════════════════════════════════════
+# /api/heat/leaderboard  — Live heat score leaderboard
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _heat_db_conn():
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    return conn
+
+def _fmt_event(row, rank: int) -> dict:
+    import json as _json
+    meta = {}
+    try:
+        if row["heat_meta"]:
+            meta = _json.loads(row["heat_meta"])
+    except Exception:
+        pass
+    cats = [c.strip() for c in (row["category"] or "").split("|") if c.strip()]
+    # Derive display name from content if ai_name missing
+    content = row["content"] or ""
+    name = row["ai_name"] or ""
+    if not name:
+        import re
+        m = re.search(r'【([^】]{4,40})】', content)
+        name = m.group(1) if m else content[:50]
+    return {
+        "rank":          rank,
+        "event_id":      row["event_id"],
+        "name":          name,
+        "content":       content[:150],
+        "category":      cats,
+        "operator":      row["operator"] or "",
+        "platform":      row["platform"] or "",
+        "source_count":  row["source_count"] or 1,
+        "heat_score":    float(row["heat_score"]),
+        "platforms":     meta.get("platforms", [row["platform"]]),
+        "platform_count":meta.get("platform_count", 1),
+        "decay_factor":  meta.get("decay_factor", 1.0),
+        "newest_post":   meta.get("newest_post", ""),
+        "published_at":  row["published_at"] or "",
+    }
+
+def get_heat_score_map(conn, event_ids):
+    if not event_ids: return {}
+    placeholders = ",".join(["?"] * len(event_ids))
+    rows = conn.execute(f"SELECT event_id, heat_score FROM events_deduped WHERE event_id IN ({placeholders})", event_ids).fetchall()
+    return {r[0]: (r[1] or 0) for r in rows}
+
+@app.get("/api/heat/leaderboard")
+async def heat_leaderboard(top: int = 10):
+    """
+    Returns top N events overall + top 3 per atomic category.
+    Requires heat_analyzer.py to have been run first.
+    """
+    ATOMIC_CATS = [
+        "accommodation","concert","crossover","entertainment",
+        "exhibition","experience","food","gaming","shopping","sport"
+    ]
+    conn = _heat_db_conn()
+    try:
+        # Check heat_score exists
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(events_deduped)").fetchall()}
+        if "heat_score" not in cols:
+            return {"success": False, "message": "heat_score 欄位唔存在，請先跑 heat_analyzer.py"}
+
+        # Top overall
+        rows = conn.execute("""
+            SELECT event_id, platform, operator, content, category,
+                   source_count, heat_score, heat_meta, ai_name, published_at
+            FROM events_deduped
+            WHERE heat_score IS NOT NULL
+            ORDER BY heat_score DESC
+            LIMIT ?
+        """, (top,)).fetchall()
+        top_overall = [_fmt_event(r, i+1) for i, r in enumerate(rows)]
+
+        # Per-category top 3
+        by_category = {}
+        for cat in ATOMIC_CATS:
+            cat_rows = conn.execute("""
+                SELECT event_id, platform, operator, content, category,
+                       source_count, heat_score, heat_meta, ai_name, published_at
+                FROM events_deduped
+                WHERE heat_score IS NOT NULL AND category LIKE ?
+                ORDER BY heat_score DESC
+                LIMIT 3
+            """, (f"%{cat}%",)).fetchall()
+            by_category[cat] = [_fmt_event(r, i+1) for i, r in enumerate(cat_rows)]
+
+        total = conn.execute("SELECT COUNT(*) FROM events_deduped WHERE heat_score IS NOT NULL").fetchone()[0]
+        return {
+            "success":     True,
+            "total":       total,
+            "categories":  ATOMIC_CATS,
+            "top_overall": top_overall,
+            "by_category": by_category,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# /api/heat/leaderboard-ai  — AI-activity-level leaderboard with DB cache
+#
+# Architecture:
+#   • Results are cached in heat_leaderboard_cache table (JSON blob per cache_key)
+#   • GET  /api/heat/leaderboard-ai          → serve from cache (instant)
+#   • POST /api/heat/leaderboard-ai/refresh  → re-run AI extraction, update cache
+#   • Cache key = "operators|categories"     → different filter combos cached separately
+#   • Cache TTL enforced client-side via `cached_at` timestamp in response
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ensure_cache_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS heat_leaderboard_cache (
+            cache_key   TEXT PRIMARY KEY,
+            cached_at   TEXT NOT NULL,
+            payload     TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+
+def _cache_key(operators: str, category: str) -> str:
+    ops  = ",".join(sorted(o.strip() for o in operators.split(",") if o.strip()))
+    cats = ",".join(sorted(c.strip() for c in category.split(",")  if c.strip()))
+    return f"{ops}|{cats}"
+
+def _read_cache(conn, key: str):
+    row = conn.execute(
+        "SELECT cached_at, payload FROM heat_leaderboard_cache WHERE cache_key=?", (key,)
+    ).fetchone()
+    if not row: return None, None
+    try:
+        return row[0], json.loads(row[1])
+    except Exception:
+        return None, None
+
+def _write_cache(conn, key: str, payload: dict):
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        "INSERT OR REPLACE INTO heat_leaderboard_cache (cache_key, cached_at, payload) VALUES (?,?,?)",
+        (key, now, json.dumps(payload, ensure_ascii=False))
+    )
+    conn.commit()
+
+
+async def _build_leaderboard_ai_payload(operators: str, category: str, top: int,
+                                         from_date: str, to_date: str) -> dict:
+    """
+    Core logic: call analyze(), flatten + sort AI activities by heat_score.
+    Returns the full response payload dict (without cache metadata).
+    """
+    default_ops = "wynn,sands,galaxy,mgm,melco,sjm"
+    ops_param   = operators or default_ops
+
+    result = await analyze(
+        keyword   = "",
+        operators = ops_param,
+        category  = category,
+        from_date = from_date,
+        to_date   = to_date,
+    )
+    if result.get("status") != "success":
+        return {"success": False, "message": result.get("message", "analyze failed")}
+
+    cat_data = result.get("category_summaries") or {}
+
+    ATOMIC_CATS = [
+        "accommodation", "concert", "crossover", "exhibition",
+        "experience", "food", "gaming", "shopping", "sport",
+    ]
+
+    # Flatten and global-sort for top_overall
+    all_acts = []
+    for cat_key, acts in cat_data.items():
+        for act in acts:
+            if act.get("heat_score") is not None:
+                all_acts.append({**act, "_cat_key": cat_key})
+    all_acts.sort(key=lambda a: (a.get("heat_score") or 0), reverse=True)
+
+    top_overall = []
+    for i, act in enumerate(all_acts[:top]):
+        cat_key = act.pop("_cat_key", "")
+        top_overall.append({
+            "rank":          i + 1,
+            "name":          act.get("name") or "",
+            "description":   act.get("description") or "",
+            "date":          act.get("date") or "",
+            "location":      act.get("location") or "",
+            "category":      act.get("category") or cat_key,
+            "sub_type":      act.get("sub_type") or "",
+            "operator":      act.get("operator") or "",
+            "heat_score":    act.get("heat_score"),
+            "decay_factor":  act.get("decay_factor"),
+            "newest_post":   act.get("newest_post") or "",
+            "platforms":     act.get("platforms") or [],
+            "platform_count":act.get("platform_count") or 0,
+            "source_count":  act.get("source_count") or 0,
+            "source_posts":  act.get("source_posts") or [],
+        })
+
+    # Per-category top 3 (already sorted by heat inside each cat)
+    by_category = {}
+    for cat_key in ATOMIC_CATS:
+        acts = cat_data.get(cat_key) or []
+        by_category[cat_key] = [
+            {
+                "rank":          j + 1,
+                "name":          a.get("name") or "",
+                "description":   a.get("description") or "",
+                "date":          a.get("date") or "",
+                "location":      a.get("location") or "",
+                "category":      a.get("category") or cat_key,
+                "sub_type":      a.get("sub_type") or "",
+                "operator":      a.get("operator") or "",
+                "heat_score":    a.get("heat_score"),
+                "decay_factor":  a.get("decay_factor"),
+                "newest_post":   a.get("newest_post") or "",
+                "platforms":     a.get("platforms") or [],
+                "platform_count":a.get("platform_count") or 0,
+                "source_count":  a.get("source_count") or 0,
+            }
+            for j, a in enumerate(acts[:3])
+            if a.get("heat_score") is not None
+        ]
+
+    total = sum(len(v) for v in cat_data.values())
+    return {
+        "success":     True,
+        "total":       total,
+        "categories":  ATOMIC_CATS,
+        "top_overall": top_overall,
+        "by_category": by_category,
+    }
+
+
+@app.get("/api/heat/leaderboard-ai")
+async def heat_leaderboard_ai(
+    operators: str = "",
+    category:  str = "",
+    top:       int = 10,
+    from_date: str = "",
+    to_date:   str = "",
+):
+    """
+    Serve AI-activity-level heat leaderboard from DB cache.
+    If no cache exists yet, runs the full analysis and caches it.
+    Use POST /api/heat/leaderboard-ai/refresh to force a rebuild.
+    """
+    conn = _heat_db_conn()
+    try:
+        _ensure_cache_table(conn)
+        key = _cache_key(operators, category)
+        cached_at, payload = _read_cache(conn, key)
+
+        if payload:
+            payload["cached_at"]   = cached_at
+            payload["from_cache"]  = True
+            return payload
+
+        # No cache yet → build it now (first-time, blocking)
+        print(f"[leaderboard-ai] No cache for '{key}', building now…")
+        payload = await _build_leaderboard_ai_payload(operators, category, top, from_date, to_date)
+        if payload.get("success"):
+            _write_cache(conn, key, payload)
+        payload["from_cache"] = False
+        return payload
+
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/heat/leaderboard-ai/refresh")
+async def heat_leaderboard_ai_refresh(
+    operators: str = "",
+    category:  str = "",
+    top:       int = 10,
+    from_date: str = "",
+    to_date:   str = "",
+):
+    """
+    Force re-run AI activity extraction and update the DB cache.
+    Call this after heat_analyzer.py runs, or when you want fresh activity names.
+    Returns the new payload immediately.
+    """
+    conn = _heat_db_conn()
+    try:
+        _ensure_cache_table(conn)
+        key = _cache_key(operators, category)
+        print(f"[leaderboard-ai/refresh] Rebuilding cache for '{key}'…")
+        payload = await _build_leaderboard_ai_payload(operators, category, top, from_date, to_date)
+        if payload.get("success"):
+            _write_cache(conn, key, payload)
+            payload["from_cache"] = False
+            payload["refreshed"]  = True
+        return payload
+    except Exception as e:
+        return {"success": False, "message": str(e)}
     finally:
         conn.close()
 

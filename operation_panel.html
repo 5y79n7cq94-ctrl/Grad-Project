@@ -680,6 +680,17 @@
       <div class="brand-text">Macau Resort Analytics</div>
     </div>
     <div class="nav-right" style="flex-direction:row; align-items:center; gap:14px;">
+      <!-- Heat Leaderboard link — passes session params so user can return here without re-login -->
+      <a id="heatLbLink" href="./heat_leaderboard_v2.html" style="
+        display:inline-flex;align-items:center;gap:6px;
+        padding:7px 14px;border-radius:20px;
+        background:rgba(234,88,12,0.10);border:1px solid rgba(234,88,12,0.22);
+        color:#C2410C;font-size:12px;font-weight:650;
+        text-decoration:none;white-space:nowrap;transition:.15s;"
+        onmouseover="this.style.background='rgba(234,88,12,0.18)'"
+        onmouseout="this.style.background='rgba(234,88,12,0.10)'">
+        🔥 Heat Leaderboard
+      </a>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
         <span style="font-size:13px; font-weight:600; color:var(--text);" id="nav-username">—</span>
         <span class="last-updated" id="lastUpdated">Last Sync: —</span>
@@ -1020,6 +1031,14 @@
     function handleSignOut() {
       window.location.href = 'login_page.html';
     }
+
+    // Pass current session params to Heat Leaderboard link so user can return without re-login
+    (function(){
+      const lbLink = document.getElementById('heatLbLink');
+      if(lbLink && window.location.search){
+        lbLink.href = './heat_leaderboard_v2.html' + window.location.search;
+      }
+    })();
 
     const DEMO = {
       lastUpdatedISO: new Date().toISOString(),
@@ -1663,11 +1682,14 @@
                     <span style="font-size:22px;">${cfg.icon}</span>
                     <span style="font-size:16px;font-weight:700;color:${cfg.color};letter-spacing:.5px;">${cfg.label}</span>
                 </div>
-                <span style="font-size:12px;font-weight:600;
-                    background:${cfg.color}20;color:${cfg.color};
-                    padding:3px 10px;border-radius:20px;">
-                    ${acts.length} event${acts.length !== 1 ? 's' : ''}
-                </span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:10px;font-weight:600;color:${cfg.color};opacity:.65;white-space:nowrap;">🔥 heat sorted</span>
+                    <span style="font-size:12px;font-weight:600;
+                        background:${cfg.color}20;color:${cfg.color};
+                        padding:3px 10px;border-radius:20px;">
+                        ${acts.length} event${acts.length !== 1 ? 's' : ''}
+                    </span>
+                </div>
             `;
             catSection.appendChild(catHeader);
 
@@ -1680,8 +1702,23 @@
                 padding: 16px;
             `;
 
-            for (const act of acts) {
-                grid.appendChild(createActivityCard(act, catKey));
+            for (const [idx, act] of acts.entries()) {
+                const card = createActivityCard(act, catKey);
+                // #1 #2 #3 heat rank badge if heat_score present
+                if (act.heat_score != null && idx < 3) {
+                    const rankColors = ['#D97706','#64748B','#CD7F32'];
+                    const rankBgs    = ['rgba(245,158,11,0.12)','rgba(100,116,139,0.10)','rgba(180,100,50,0.10)'];
+                    const badge = document.createElement('div');
+                    badge.style.cssText = `position:absolute;top:-9px;left:10px;
+                        font-size:11px;font-weight:800;
+                        padding:1px 9px;border-radius:20px;
+                        background:${rankBgs[idx]};color:${rankColors[idx]};
+                        border:1.5px solid ${rankColors[idx]}40;z-index:1;`;
+                    badge.textContent = `#${idx+1}`;
+                    card.style.position = 'relative';
+                    card.prepend(badge);
+                }
+                grid.appendChild(card);
             }
 
             catSection.appendChild(grid);
@@ -1750,6 +1787,14 @@
         el.onmouseenter = () => el.style.boxShadow = '0 4px 16px rgba(0,0,0,0.10)';
         el.onmouseleave = () => el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)';
 
+        // Heat badge
+        const heatScore = act.heat_score != null ? parseFloat(act.heat_score) : null;
+        const heatBadgeHtml = heatScore != null ? (() => {
+            const flame = heatScore >= 80 ? '🔥🔥🔥' : heatScore >= 60 ? '🔥🔥' : heatScore >= 35 ? '🔥' : '❄️';
+            const hc = heatScore >= 80 ? '#EA580C' : heatScore >= 60 ? '#D97706' : heatScore >= 35 ? '#B45309' : '#64748B';
+            return `<span title="Heat Score: ${heatScore.toFixed(1)}" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${hc}15;color:${hc};border:1px solid ${hc}30;display:inline-flex;align-items:center;gap:3px;">${flame} ${heatScore.toFixed(1)}</span>`;
+        })() : '';
+
         el.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
                 <span style="font-size:10px;font-weight:700;letter-spacing:.8px;
@@ -1757,7 +1802,8 @@
                     background:${cfg.color}15;color:${cfg.color};">
                     ${cfg.icon} ${cfg.label}
                 </span>
-                <div style="display:flex;gap:5px;align-items:center;">
+                <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+                    ${heatBadgeHtml}
                     ${op ? `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;background:${opColor}15;color:${opColor};">${opLabel}</span>` : ''}
                     <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:20px;${srcStyle}">${srcLabel}</span>
                 </div>
