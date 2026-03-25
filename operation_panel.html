@@ -933,6 +933,36 @@
               </div>
 
             </div>
+
+            <!-- Avg Heat + Heat Tier side by side -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:24px;border-top:1px solid rgba(15,23,42,0.08);padding-top:20px;align-items:start;">
+
+              <!-- LEFT: Avg Heat by Category -->
+              <div>
+                <div style="font-size:13px;font-weight:700;margin-bottom:2px;color:var(--text);">Avg Heat Score by Organiser</div>
+                <div style="font-size:11.5px;color:var(--muted);margin-bottom:12px;">Select a category to compare organisers</div>
+                <div id="heatCatFilter" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;"></div>
+                <div id="heatAvgBarWrap" style="position:relative;">
+                  <canvas id="heatAvgBarChart"></canvas>
+                </div>
+              </div>
+
+              <!-- RIGHT: Heat Tier Breakdown -->
+              <div>
+                <div style="font-size:13px;font-weight:700;margin-bottom:2px;color:var(--text);">Heat tier breakdown by organiser</div>
+                <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">Share of events by tier · click a bar segment to filter events · click again to reset</div>
+                <div id="heatTierWrap" style="position:relative;">
+                  <canvas id="heatTierChart"></canvas>
+                </div>
+                <div style="display:flex;gap:16px;margin-top:10px;font-size:11.5px;color:var(--muted);">
+                  <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:#1E40AF;display:inline-block;"></span>High (≥ 60)</span>
+                  <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:#60A5FA;display:inline-block;"></span>Mid (30–59)</span>
+                  <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:#CBD5E1;display:inline-block;"></span>Low (&lt; 30)</span>
+                </div>
+              </div>
+
+            </div>
+
           </section>
 
           <!-- Block #3: Organiser Perspective -->
@@ -2059,11 +2089,22 @@ function applyChartFilter(operatorName, catKey) {
     ` · <span style="color:${catCfg.color};font-weight:700;">${catCfg.label}</span> events`;
 
   const filtered = {};
+  // Primary: exact catKey match
   if (_chartCatData[catKey]) {
     const matching = _chartCatData[catKey].filter(a =>
       (a.operator || '').toLowerCase() === operatorName.toLowerCase()
     );
     if (matching.length) filtered[catKey] = matching;
+  }
+  // Fallback: if no results, search ALL categories for this operator
+  // (handles cases where catKey differs from _chartCatData keys)
+  if (!Object.keys(filtered).length) {
+    for (const [k, acts] of Object.entries(_chartCatData)) {
+      const matching = acts.filter(a =>
+        (a.operator || '').toLowerCase() === operatorName.toLowerCase()
+      );
+      if (matching.length) filtered[k] = matching;
+    }
   }
 
   const container = document.getElementById('analyticsContent');
@@ -2212,11 +2253,11 @@ function renderBarChart() {
 
     const bgColors = activeCats.map((catKey) => {
       const isActiveSegment = _chartFilter.catKey === catKey && _chartFilter.operator === op;
-      if (!isFilteringBar) return isWynn ? color + 'EE' : color + '88';
+      if (!isFilteringBar) return color;
       if (_chartFilter.operator && _chartFilter.catKey) {
-        return isActiveSegment ? color + 'EE' : color + '22';
+        return isActiveSegment ? color : color + '22';
       }
-      return isWynn ? color + 'EE' : color + '88';
+      return color;
     });
 
     return {
@@ -2242,8 +2283,42 @@ function renderBarChart() {
     return;
   }
 
+  const _barLabelPlugin = {
+    id: 'barInlineLabels',
+    afterDatasetsDraw(chart) {
+      const { ctx, scales: { x } } = chart;
+      const ff = getComputedStyle(document.body).fontFamily || 'sans-serif';
+      chart.data.datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
+        meta.data.forEach((bar, i) => {
+          const val = ds.data[i];
+          if (!val) return;
+          const barRight = x.getPixelForValue(val);
+          const barLeft  = x.getPixelForValue(0);
+          const barW     = barRight - barLeft;
+          const by       = bar.y;
+          ctx.save();
+          ctx.font = '600 11px ' + ff;
+          ctx.textBaseline = 'middle';
+          if (barW > 28) {
+            ctx.fillStyle = 'rgba(0,0,0,0.80)';
+            ctx.textAlign = 'right';
+            ctx.fillText(val, barRight - 6, by);
+          } else {
+            ctx.fillStyle = 'rgba(0,0,0,0.65)';
+            ctx.textAlign = 'left';
+            ctx.fillText(val, barRight + 4, by);
+          }
+          ctx.restore();
+        });
+      });
+    }
+  };
+
   _barChart = new Chart(canvas, {
     type: 'bar',
+    plugins: [_barLabelPlugin],
     data: { labels: catLabels, datasets },
     options: {
       indexAxis: 'y',
@@ -2278,7 +2353,7 @@ function renderBarChart() {
         },
         y: {
           grid: { display: false },
-          ticks: { font: { size: 12, weight: '600' }, color: 'rgba(15,23,42,0.75)' }
+          ticks: { font: { size: 12, weight: '600' }, color: 'rgba(0,0,0,0.75)' }
         }
       }
     }
@@ -2329,11 +2404,37 @@ document.getElementById('doughnutOperatorSelect').addEventListener('change', fun
   renderDoughnutChart(this.value);
 });
 
+// ── Sync doughnut select options to sidebar operator checkboxes ───────────────
+const _OP_TITLE_ORDER = ['Wynn','Sands','Galaxy','MGM','Melco','SJM','Government'];
+function syncDoughnutOps() {
+  const sel     = document.getElementById('doughnutOperatorSelect');
+  if (!sel) return;
+  const checked = _checkedOps(); // lowercase
+  const current = sel.value;
+  sel.innerHTML = _OP_TITLE_ORDER
+    .filter(op => checked.includes((_OP_LC[op] || op.toLowerCase())))
+    .map(op => `<option value="${op}">${op}</option>`)
+    .join('');
+  // Restore previous selection if still available, else default to first
+  if ([...sel.options].some(o => o.value === current)) {
+    sel.value = current;
+  } else {
+    sel.selectedIndex = 0;
+  }
+  renderDoughnutChart(sel.value);
+}
+
+// Hook into every operator checkbox
+document.querySelectorAll('input[name="operator"]').forEach(cb =>
+  cb.addEventListener('change', syncDoughnutOps)
+);
+
 // ── Patch renderGroupedResults ───────────────────────────
 const _origRenderGrouped = renderGroupedResults;
 window.renderGroupedResults = function(summaries, isCrawling) {
   _origRenderGrouped(summaries, isCrawling);
   refreshAnalyticsCharts(summaries);
+  if (typeof window._rebuildTierChart === 'function') window._rebuildTierChart();
 };
 
 // ── Patch fillResults (DEMO mode) ────────────────────────
@@ -2355,7 +2456,12 @@ window.fillResults = function(data) {
     if (nm.includes('concert') || nm.includes('music')) cat = 'concert';
     else if (nm.includes('poker') || nm.includes('blackjack') || nm.includes('slot') || nm.includes('gaming')) cat = 'gaming';
     else if (nm.includes('food') || nm.includes('festival') || nm.includes('chef')) cat = 'food';
+    else if (nm.includes('hotel') || nm.includes('suite') || nm.includes('stay') || nm.includes('room') || nm.includes('accommodation') || nm.includes('resort') || nm.includes('check-in')) cat = 'accommodation';
     else if (nm.includes('tourism') || nm.includes('briefing') || nm.includes('safety')) cat = 'experience';
+    else if (nm.includes('shop') || nm.includes('retail') || nm.includes('boutique') || nm.includes('mall')) cat = 'shopping';
+    else if (nm.includes('exhibition') || nm.includes('exhibit') || nm.includes('gallery') || nm.includes('art')) cat = 'exhibition';
+    else if (nm.includes('sport') || nm.includes('marathon') || nm.includes('race') || nm.includes('tournament')) cat = 'sport';
+    else if (nm.includes('crossover') || nm.includes('pop-up') || nm.includes('collab') || nm.includes('x ')) cat = 'crossover';
     if (!demoCatData[cat]) demoCatData[cat] = [];
     demoCatData[cat].push(ev);
   }
@@ -2364,10 +2470,422 @@ window.fillResults = function(data) {
   const sel = document.getElementById('doughnutOperatorSelect');
   renderDoughnutChart(sel ? sel.value : 'Wynn');
   renderBarChart();
+  if (typeof window._rebuildTierChart === 'function') window._rebuildTierChart();
 };
 
 // Initial render
 window.fillResults(DEMO);
+
+// ── Shared helpers ───────────────────────────────────────────────────────────
+const _OP_FILL  = { wynn:'#F59E0B', melco:'#A855F7', mgm:'#F43F5E', galaxy:'#10B981', sands:'#3B82F6', sjm:'#06B6D4', government:'#64748B' };
+const _OP_LABEL = { wynn:'Wynn \u2605', melco:'Melco', mgm:'MGM', galaxy:'Galaxy', sands:'Sands', sjm:'SJM', government:'Government' };
+const _OP_LC    = { Melco:'melco', Wynn:'wynn', MGM:'mgm', Galaxy:'galaxy', Sands:'sands', SJM:'sjm', Government:'government' };
+function _checkedOps()  { return typeof getSelectedValues==='function' ? getSelectedValues('operator') : []; }
+function _checkedCats() { return typeof getSelectedValues==='function' ? getSelectedValues('category') : []; }
+
+// ── Heat Tier Breakdown Chart ─────────────────────────────────────────────────
+(function() {
+  const ALL_OPS  = ['Melco','Wynn','MGM','Galaxy','Sands','SJM'];
+  const TIER_HIGH = '#1E40AF', TIER_MID = '#60A5FA', TIER_LOW = '#CBD5E1';
+  let _tf = { op:null, tier:null };
+  let _tc = null;
+
+  // Hardcoded DEMO tier data (used when live heat_score not available)
+  const DEMO_TIER = {
+    Melco:{high:29,mid:23,low:10,total:62}, Wynn:{high:8,mid:20,low:5,total:33},
+    MGM:{high:8,mid:45,low:7,total:60},     Galaxy:{high:13,mid:25,low:17,total:55},
+    Sands:{high:13,mid:42,low:28,total:83}, SJM:{high:7,mid:39,low:23,total:69},
+  };
+
+  // Compute tier counts from live _chartCatData; falls back to DEMO_TIER if no heat_score found
+  function computeTierData() {
+    const result = {};
+    ALL_OPS.forEach(op => { result[op] = { high:0, mid:0, low:0, total:0 }; });
+    let hasLiveData = false;
+    for (const acts of Object.values(_chartCatData)) {
+      for (const a of acts) {
+        const opRaw = (a.operator||'').toLowerCase();
+        const opKey = ALL_OPS.find(o => (_OP_LC[o]||o.toLowerCase()) === opRaw);
+        if (!opKey) continue;
+        const hs = typeof a.heat_score === 'number' ? a.heat_score : null;
+        if (hs === null) continue;
+        hasLiveData = true;
+        result[opKey].total++;
+        if (hs >= 60)      result[opKey].high++;
+        else if (hs >= 30) result[opKey].mid++;
+        else               result[opKey].low++;
+      }
+    }
+    // No heat_score in _chartCatData → DEMO mode, use hardcoded data
+    if (!hasLiveData) {
+      ALL_OPS.forEach(op => { result[op] = { ...DEMO_TIER[op] }; });
+    }
+    return result;
+  }
+
+  function activeOps(tierData) {
+    const chk = _checkedOps();
+    return ALL_OPS.filter(op =>
+      chk.includes(_OP_LC[op]||op.toLowerCase()) &&
+      tierData[op] && tierData[op].total > 0
+    );
+  }
+
+  function bgColors(ops, tier, active) {
+    const base = tier==='high' ? TIER_HIGH : tier==='mid' ? TIER_MID : TIER_LOW;
+    return ops.map(op => (!active||(active.op===op&&active.tier===tier)) ? base : base+'33');
+  }
+
+  function buildTierChart() {
+    const canvas = document.getElementById('heatTierChart');
+    const wrap   = document.getElementById('heatTierWrap');
+    if (!canvas) return;
+
+    const tierData = computeTierData();
+    const ops = activeOps(tierData);
+
+    if (!ops.length) {
+      wrap.style.height = '60px';
+      if (_tc) { _tc.destroy(); _tc = null; }
+      return;
+    }
+    wrap.style.height = (ops.length * 44 + 60) + 'px';
+
+    const pct = (op, tier) => {
+      const d = tierData[op];
+      return d.total ? Math.round(d[tier] / d.total * 100) : 0;
+    };
+
+    const mkDs = (tier, label) => ({
+      label, _tier: tier,
+      data: ops.map(op => pct(op, tier)),
+      backgroundColor: bgColors(ops, tier, null),
+      borderWidth: 0,
+      borderRadius: { topLeft:0, topRight:3, bottomLeft:0, bottomRight:3 },
+      borderSkipped: false,
+    });
+
+    const datasets = [
+      mkDs('high', 'High (≥60)'),
+      mkDs('mid',  'Mid (30–59)'),
+      mkDs('low',  'Low (<30)'),
+    ];
+
+    const labelPlugin = {
+      id: 'tierLabels',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const ff = getComputedStyle(document.body).fontFamily || 'sans-serif';
+        chart.data.datasets.forEach((ds, di) => {
+          const meta = chart.getDatasetMeta(di);
+          meta.data.forEach((bar, i) => {
+            const v = ds.data[i]; if (!v) return;
+            const { x, y, base } = bar.getProps(['x','y','base']);
+            const bw = Math.abs(x - base); if (bw < 22) return;
+            ctx.save();
+            ctx.font = '600 11px ' + ff;
+            ctx.fillStyle = di === 0 ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.75)';
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'center';
+            ctx.fillText(v + '%', base + bw / 2, y);
+            ctx.restore();
+          });
+        });
+      }
+    };
+
+    if (_tc) { _tc.destroy(); _tc = null; }
+    _tc = new Chart(canvas, {
+      type: 'bar',
+      plugins: [labelPlugin],
+      data: { labels: ops, datasets },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        layout: { padding: { right: 80 } },
+        onHover(e, els) { canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+        onClick(e, els) {
+          if (!els.length) { _tf={op:null,tier:null}; _updateColors(ops,tierData); clearChartFilter(); return; }
+          const op   = ops[els[0].index];
+          const tier = datasets[els[0].datasetIndex]._tier;
+          if (_tf.op===op && _tf.tier===tier) {
+            _tf={op:null,tier:null}; _updateColors(ops,tierData); clearChartFilter();
+          } else {
+            _tf={op,tier}; _updateColors(ops,tierData); _applyTierFilter(op, tier, tierData);
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: {
+            title: ctx => ctx[0].label,
+            label: ctx => {
+              const ds  = datasets[ctx.datasetIndex];
+              const op  = ops[ctx.dataIndex];
+              const n   = tierData[op][ds._tier];
+              return ['  ' + ds.label + ': ' + ctx.parsed.x + '% (' + n + ' events)', '  Click to filter events'];
+            },
+            footer: () => ''
+          }}
+        },
+        scales: {
+          x: { stacked:true, max:100,
+               ticks:{ stepSize:25, font:{size:11}, color:'rgba(15,23,42,0.50)', callback:v=>v+'%' },
+               grid:{ color:'rgba(15,23,42,0.07)' } },
+          y: { stacked:true, grid:{display:false},
+               ticks:{ font:{size:12,weight:'600'}, color:'rgba(0,0,0,0.75)' } }
+        },
+        animation: { onComplete() {
+          if (!_tc) return;
+          const { ctx, scales: { x, y } } = _tc;
+          const ff = getComputedStyle(document.body).fontFamily || 'sans-serif';
+          ops.forEach((op, i) => {
+            const yp = y.getPixelForValue(i);
+            ctx.save();
+            ctx.font = '500 11px ' + ff;
+            ctx.fillStyle = 'rgba(15,23,42,0.45)';
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'left';
+            ctx.fillText(tierData[op].total + ' events', x.getPixelForValue(100) + 8, yp);
+            ctx.restore();
+          });
+        }}
+      }
+    });
+  }
+
+  function _updateColors(ops, tierData) {
+    if (!_tc) return;
+    const active = (_tf.op && _tf.tier) ? _tf : null;
+    _tc.data.datasets.forEach(ds => {
+      ds.backgroundColor = bgColors(ops || activeOps(computeTierData()), ds._tier, active);
+    });
+    _tc.update('none');
+  }
+
+  function _applyTierFilter(op, tier, tierData) {
+    const minS = tier==='high'?60 : tier==='mid'?30 : 0;
+    const maxS = tier==='high'?101: tier==='mid'?60 : 30;
+    const tierLabel = tier==='high'?'High (≥60)':tier==='mid'?'Mid (30–59)':'Low (<30)';
+    const tierColor = tier==='high'?TIER_HIGH:tier==='mid'?TIER_MID:'#94A3B8';
+    const opColor   = CHART_OP_COLORS[op] || '#6B7280';
+    const banner = document.getElementById('chartFilterBanner');
+    const label  = document.getElementById('chartFilterLabel');
+    if (banner) banner.style.display = 'flex';
+    if (label) label.innerHTML =
+      'Showing: <span style="color:'+opColor+';font-weight:700;">'+op+'</span>' +
+      ' · <span style="color:'+tierColor+';font-weight:700;">'+tierLabel+'</span> events';
+    const filtered = {};
+    for (const [cat, acts] of Object.entries(_chartCatData)) {
+      const m = acts.filter(a => {
+        const om = (a.operator||'').toLowerCase() === op.toLowerCase();
+        const hm = typeof a.heat_score==='number' ? a.heat_score>=minS && a.heat_score<maxS : true;
+        return om && hm;
+      });
+      if (m.length) filtered[cat] = m;
+    }
+    const container = document.getElementById('analyticsContent');
+    if (container) { container.innerHTML = ''; _renderGroupedBody(filtered, container); }
+    const evBlock = document.querySelector('.block');
+    if (evBlock) evBlock.scrollIntoView({ behavior:'smooth', block:'start' });
+    _chartFilter = { operator: op, catKey: null };
+    renderDoughnutChart(op);
+    renderBarChart();
+  }
+
+  // Expose so external refreshes (after crawl) can rebuild
+  window._rebuildTierChart = buildTierChart;
+
+  // Re-render when sidebar checkboxes change
+  document.querySelectorAll('input[name="operator"]').forEach(cb =>
+    cb.addEventListener('change', buildTierChart)
+  );
+
+  // Initial build — defer so fillResults(DEMO) has already run
+  setTimeout(buildTierChart, 0);
+})();
+
+// ── Avg Heat by Category Chart
+
+// ── Avg Heat by Category Chart ───────────────────────────────────────────────
+(function() {
+  const HEAT_CAT_DATA = {
+    concert:       { melco:57.7, wynn:54.0, sands:50.2, mgm:50.0, galaxy:42.4, sjm:33.7 },
+    food:          { melco:59.6, wynn:50.0, mgm:43.4, sjm:41.6, sands:41.5, galaxy:31.8 },
+    exhibition:    { melco:69.8, sjm:52.7, sands:50.9, galaxy:48.2, mgm:43.9, wynn:43.6 },
+    experience:    { melco:63.7, mgm:53.9, wynn:49.6, sands:49.5, galaxy:38.6, sjm:28.7 },
+    crossover:     { melco:68.3, wynn:53.9, sands:45.4, sjm:44.3, mgm:42.8, galaxy:31.7 },
+    shopping:      { galaxy:62.9, wynn:56.4, sands:42.8, sjm:35.1, mgm:18.6 },
+    accommodation: { wynn:64.0, melco:59.1, mgm:54.8, sands:40.7, galaxy:36.4, sjm:33.9 },
+    sport:         { melco:83.3, sands:71.8, galaxy:63.1 },
+  };
+  const CAT_LABELS = {
+    concert:'Concert', food:'Food', exhibition:'Exhibition', experience:'Experience',
+    crossover:'Crossover', shopping:'Shopping', accommodation:'Accommodation', sport:'Sport'
+  };
+
+  let selectedCat = null;
+  let heatAvgChart = null;
+  let _activeHabOp = null;
+
+  // Get categories that are both checked in sidebar AND have data
+  function activeCats() {
+    const chk = _checkedCats();
+    return Object.keys(HEAT_CAT_DATA).filter(c => chk.includes(c));
+  }
+
+  // Get operators that are checked in sidebar AND have data for the current cat
+  function activeOpsForCat(cat) {
+    const chk    = _checkedOps();
+    const catRow = HEAT_CAT_DATA[cat] || {};
+    return Object.entries(catRow)
+      .filter(([op]) => chk.includes(op))
+      .sort((a,b) => b[1]-a[1])
+      .map(([op]) => op);
+  }
+
+  function buildPills() {
+    const container = document.getElementById('heatCatFilter');
+    if (!container) return;
+    container.innerHTML = '';
+    const cats = activeCats();
+    if (!cats.length) { container.innerHTML='<span style="font-size:12px;color:var(--muted);">No categories selected.</span>'; return; }
+    // Reset selectedCat if it's no longer active
+    if (!cats.includes(selectedCat)) selectedCat = cats[0];
+    cats.forEach(cat => {
+      const pill = document.createElement('button');
+      const active = cat === selectedCat;
+      pill.textContent = CAT_LABELS[cat] || cat;
+      pill.style.cssText =
+        'padding:5px 13px;border-radius:999px;font-size:12px;font-weight:650;cursor:pointer;'+
+        'border:1px solid '+(active?'rgba(37,99,235,0.40)':'rgba(15,23,42,0.14)')+';'+
+        'background:'+(active?'rgba(37,99,235,0.12)':'rgba(255,255,255,0.70)')+';'+
+        'color:'+(active?'#1D4ED8':'rgba(15,23,42,0.75)')+';'+
+        'font-family:var(--font);transition:.15s;';
+      pill.addEventListener('click', () => {
+        selectedCat = cat; _activeHabOp = null;
+        clearChartFilter(); buildPills(); renderHeatAvgChart();
+      });
+      container.appendChild(pill);
+    });
+  }
+
+  function renderHeatAvgChart() {
+    const canvas = document.getElementById('heatAvgBarChart');
+    const wrap   = document.getElementById('heatAvgBarWrap');
+    if (!canvas) return;
+    if (!selectedCat) { buildPills(); if (!selectedCat) return; }
+
+    const ops    = activeOpsForCat(selectedCat);
+    const maxVal = ops.length ? HEAT_CAT_DATA[selectedCat][ops[0]] : 0;
+    const values = ops.map(op => HEAT_CAT_DATA[selectedCat][op]);
+    const labels = ops.map(op => _OP_LABEL[op] || op);
+
+    wrap.style.height = (ops.length * 48 + 40) + 'px';
+    if (heatAvgChart) { heatAvgChart.destroy(); heatAvgChart = null; }
+    if (!ops.length) return;
+
+    const labelPlugin = {
+      id:'habLabels',
+      afterDatasetsDraw(chart) {
+        const {ctx,scales:{x}} = chart;
+        const ff=getComputedStyle(document.body).fontFamily||'sans-serif';
+        const meta=chart.getDatasetMeta(0);
+        meta.data.forEach((bar,i) => {
+          const val=values[i], op=ops[i], isMax=val===maxVal;
+          const bRight=x.getPixelForValue(val), bLeft=x.getPixelForValue(0);
+          const bw=bRight-bLeft, by=bar.y;
+          ctx.save();
+          ctx.font='700 12px '+ff; ctx.fillStyle='rgba(0,0,0,0.82)';
+          ctx.textBaseline='middle';
+          if (bw>40) {
+            ctx.textAlign='right'; ctx.fillText(val.toFixed(1), bRight-8, by);
+          } else {
+            ctx.textAlign='left'; ctx.fillText(val.toFixed(1), bRight+5, by);
+          }
+          ctx.restore();
+          if (isMax) {
+            const isWynn=op==='wynn';
+            const badge = isWynn ? '\u2605 Wynn leads' : (_OP_LABEL[op]||op)+' leads';
+            const bColor= _OP_FILL[op]||'#333';
+            const bBg   = (_OP_FILL[op]||'#ccc')+'22';
+            ctx.save();
+            ctx.font='600 10.5px '+ff;
+            const tw=ctx.measureText(badge).width, px=7;
+            const rx=bRight+36, ry=by-10, rw=tw+px*2, rh=20;
+            ctx.fillStyle=bBg;
+            ctx.beginPath(); ctx.roundRect(rx,ry,rw,rh,5); ctx.fill();
+            ctx.fillStyle=bColor; ctx.textBaseline='middle'; ctx.textAlign='left';
+            ctx.fillText(badge, rx+px, ry+rh/2);
+            ctx.restore();
+          }
+        });
+      }
+    };
+
+    heatAvgChart = new Chart(canvas, {
+      type:'bar', plugins:[labelPlugin],
+      data:{
+        labels,
+        datasets:[{
+          data: values,
+          backgroundColor: ops.map(op => _OP_FILL[op]||'#94A3B8'),
+          borderWidth: 0,
+          borderRadius: 5, borderSkipped: false,
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, indexAxis:'y',
+        layout:{ padding:{ right:130 } },
+        onHover(e,els){ canvas.style.cursor=els.length?'pointer':'default'; },
+        onClick(e,els) {
+          if (!els.length) {
+            _activeHabOp=null; _updateHabColors(); clearChartFilter(); return;
+          }
+          const i=els[0].index, op=ops[i];
+          const opTitle={wynn:'Wynn',melco:'Melco',mgm:'MGM',galaxy:'Galaxy',sands:'Sands',sjm:'SJM'}[op]||op;
+          if (_activeHabOp===op) {
+            _activeHabOp=null; _updateHabColors(); clearChartFilter();
+          } else {
+            _activeHabOp=op; _updateHabColors(); applyChartFilter(opTitle, selectedCat);
+          }
+        },
+        plugins:{
+          legend:{display:false},
+          tooltip:{ callbacks:{
+            title: ctx => ctx[0].label.replace(' \u2605',''),
+            label: ctx => ['  Avg heat: '+ctx.parsed.x.toFixed(1),'  Click to filter events'],
+          }}
+        },
+        scales:{
+          x:{ beginAtZero:true, max:100,
+              ticks:{ stepSize:20, font:{size:11}, color:'rgba(15,23,42,0.55)' },
+              grid:{ color:'rgba(15,23,42,0.07)' } },
+          y:{ grid:{display:false},
+              ticks:{ font:{size:12}, color:'rgba(0,0,0,0.75)' } }
+        }
+      }
+    });
+
+    function _updateHabColors() {
+      if (!heatAvgChart) return;
+      heatAvgChart.data.datasets[0].backgroundColor = ops.map(op =>
+        (!_activeHabOp||op===_activeHabOp) ? (_OP_FILL[op]||'#94A3B8') : (_OP_FILL[op]||'#94A3B8')+'33'
+      );
+      heatAvgChart.update('none');
+    }
+  }
+
+  // Re-render when sidebar checkboxes change
+  document.querySelectorAll('input[name="operator"], input[name="category"]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      _activeHabOp = null;
+      buildPills();
+      renderHeatAvgChart();
+    })
+  );
+
+  buildPills();
+  renderHeatAvgChart();
+})();
 </script>
 
 <!-- Admin panel removed — IT Admins are redirected to admin_page.html -->
