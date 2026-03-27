@@ -33,14 +33,46 @@ _DASHSCOPE_API_KEY = _os.getenv("DASHSCOPE_API_KEY", "")
 
 # ── Embedding cache（避免重複 call API）────────────────────
 _emb_cache: dict = {}
+_emb_db_conn = None
 
-def _get_embedding(text: str):
-    """呼叫 DashScope text-embedding-v3，返回向量。失敗返回 None。"""
+def _get_emb_db_conn():
+    """取得 DB connection，用於讀寫 embedding"""
+    import sqlite3 as _sq
+    db_path = _os.getenv("DB_PATH", "macau_analytics.db")
+    return _sq.connect(db_path)
+
+def _get_embedding(text: str, post_id: str = None):
+    """
+    優先從 DB 讀 embedding（posts_* 表嘅 embedding 欄）。
+    DB 冇先 call DashScope API，call 完存返落 DB。
+    """
     text = text.strip()[:500]
     if not text:
         return None
+
+    # 1. 內存 cache
     if text in _emb_cache:
         return _emb_cache[text]
+
+    # 2. DB cache（用 post_id 搵）
+    if post_id:
+        try:
+            conn = _get_emb_db_conn()
+            plat = post_id.split("_")[0]
+            table = f"posts_{plat}"
+            row = conn.execute(
+                f"SELECT embedding FROM {table} WHERE post_id=? AND embedding IS NOT NULL",
+                (post_id,)
+            ).fetchone()
+            conn.close()
+            if row:
+                vec = json.loads(row[0])
+                _emb_cache[text] = vec
+                return vec
+        except Exception:
+            pass
+
+    # 3. Call API
     if not _DASHSCOPE_API_KEY:
         return None
     try:
@@ -56,6 +88,22 @@ def _get_embedding(text: str):
         )
         vec = resp.json()["data"][0]["embedding"]
         _emb_cache[text] = vec
+
+        # 4. 存返落 DB
+        if post_id:
+            try:
+                conn = _get_emb_db_conn()
+                plat = post_id.split("_")[0]
+                table = f"posts_{plat}"
+                conn.execute(
+                    f"UPDATE {table} SET embedding=? WHERE post_id=?",
+                    (json.dumps(vec), post_id)
+                )
+                conn.commit()
+                conn.close()
+            except Exception:
+                pass
+
         return vec
     except Exception as e:
         print(f"  ⚠️ embedding 失敗: {e}")
@@ -79,14 +127,14 @@ def normalize_content(text: str) -> str:
     return t[:MAX_CONTENT_LEN]
 
 
-def content_similarity(a: str, b: str) -> float:
+def content_similarity(a: str, b: str, id_a: str = None, id_b: str = None) -> float:
     """
     優先用 DashScope embedding cosine similarity（支援中英跨語言）。
     API 失敗時 fallback 到 SequenceMatcher 文字比對。
     """
     if not a or not b:
         return 0.0
-    va, vb = _get_embedding(a), _get_embedding(b)
+    va, vb = _get_embedding(a, id_a), _get_embedding(b, id_b)
     if va and vb:
         return _cosine(va, vb)
     # fallback：純文字比對，scale 唔同，除以 1.5 對齊 threshold
@@ -141,7 +189,7 @@ def load_posts(conn: sqlite3.Connection,
                             ELSE content
                        END AS content,
                        event_date, category, sub_type, published_at, raw_json,
-                       media_text, post_url
+                       media_text, post_url, embedding
                 FROM {table}
                 WHERE (published_at >= ? OR published_at IS NULL)
                   AND content IS NOT NULL AND content != ''
@@ -168,6 +216,15 @@ def dedup_by_content(posts: list[dict]) -> list[dict]:
     Pass 2: 跨 operator，content 相似度 >= CONTENT_SIM_CROSS_OP
     """
 
+    # 預載 DB 入面已有嘅 embedding 入內存 cache
+    for p in posts:
+        emb_raw = p.get('embedding')
+        if emb_raw and p.get('content'):
+            try:
+                _emb_cache[p['content'].strip()[:500]] = json.loads(emb_raw)
+            except Exception:
+                pass
+
     def _group(candidates, threshold, cross_op):
         assigned = set()
         groups   = []
@@ -186,7 +243,10 @@ def dedup_by_content(posts: list[dict]) -> list[dict]:
                 # Complete linkage：q 要同 group 內所有成員都 >= threshold
                 all_sim_ok = True
                 for existing in group:
-                    sim = content_similarity(existing['content'] or '', q['content'] or '')
+                    sim = content_similarity(
+                        existing['content'] or '', q['content'] or '',
+                        id_a=existing['post_id'], id_b=q['post_id']
+                    )
                     if sim < threshold:
                         all_sim_ok = False
                         break

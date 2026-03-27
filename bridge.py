@@ -8,12 +8,97 @@ from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_even
 from task_manager import run_task_master
 import threading
 from datetime import datetime, timezone
+from dotenv import load_dotenv
 
 # ✏️ CHANGED: 防止重複爬蟲 thread
 # key = operator, value = True 表示而家正在爬緊
 _crawling_ops: set = set()
 _crawling_lock = threading.Lock()
 
+# ── DeepSeek analysis cache（per operator per date range）─────────────────────
+# 避免同一 operator + 日期範圍重複 call DeepSeek；重啟 bridge.py 先清除 cache
+# Analysis cache 已移到 SQLite，見 _get_analysis_cache / _set_analysis_cache
+
+def _analysis_cache_key(op_key: str, from_date: str, to_date: str, keyword: str = "") -> str:
+    kw = ",".join(sorted(k.strip().lower() for k in keyword.split(",") if k.strip()))
+    if kw:
+        return f"{op_key}|{from_date}|{to_date}|{kw}"
+    return f"{op_key}|{from_date}|{to_date}"
+def _get_analysis_cache(op_key, from_date, to_date, keyword=""):
+    try:
+        conn = _heat_db_conn()
+        base_key = _analysis_cache_key(op_key, from_date, to_date, "")  # 永遠搵全量
+        row = conn.execute(
+            "SELECT activities FROM analysis_cache WHERE cache_key=?", (base_key,)
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        
+        all_acts = json.loads(row[0])
+        
+        if not keyword.strip():
+            return all_acts  # 無 keyword 直接返全量
+        
+        # 有 keyword：從全量過濾（加繁簡轉換）
+        try:
+            from trad_simp import expand_variants as _expand_kw
+        except ImportError:
+            def _expand_kw(k): return [k]
+        
+        kw_list = []
+        for k in keyword.split(","):
+            k = k.strip()
+            if k:
+                kw_list.extend(v.lower() for v in _expand_kw(k))
+        
+        return [
+            a for a in all_acts
+            if any(
+                kw in (a.get("name") or "").lower()
+                or kw in (a.get("description") or "").lower()
+                for kw in kw_list
+            )
+        ]
+    except Exception:
+        return None
+
+def _set_analysis_cache(op_key: str, from_date: str, to_date: str, activities: list, keyword: str = ""):
+    """寫入 cache"""
+    if keyword.strip():
+        return  
+    try:
+        conn = _heat_db_conn()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analysis_cache (
+                cache_key  TEXT PRIMARY KEY,
+                activities TEXT,
+                cached_at  TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        key = _analysis_cache_key(op_key, from_date, to_date, keyword)
+        conn.execute(
+            "INSERT OR REPLACE INTO analysis_cache (cache_key, activities, cached_at) VALUES (?,?,datetime('now','localtime'))",
+            (key, json.dumps(activities, ensure_ascii=False))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ analysis_cache 寫入失敗: {e}")
+
+def _invalidate_analysis_cache(op_key: str = None):
+    """清除 cache，op_key=None 清全部"""
+    try:
+        conn = _heat_db_conn()
+        conn.execute("CREATE TABLE IF NOT EXISTS analysis_cache (cache_key TEXT PRIMARY KEY, activities TEXT, cached_at TEXT)")
+        if op_key:
+            conn.execute("DELETE FROM analysis_cache WHERE cache_key LIKE ?", (f"{op_key}|%",))
+        else:
+            conn.execute("DELETE FROM analysis_cache")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ analysis_cache invalidate 失敗: {e}")
 backfill_event_dates()
 app = FastAPI()
 
@@ -48,9 +133,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key="sk-ec64f5296ab34389a632b48aa8c28600", base_url="https://api.deepseek.com")
+load_dotenv()
+
+# 改成從環境變量讀取
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"), 
+    base_url=os.getenv("DEEPSEEK_BASE_URL")
+)
 DEEPSEEK_JSON_MODEL = "deepseek-chat"
 DEEPSEEK_REASON_MODEL = "deepseek-reasoner"
+
+QWEN_RECOMMENDATION_CLIENT = OpenAI(
+    api_key="sk-995dbed7e46548a6992a8e5153628165",
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+)
+QWEN_RECOMMENDATION_MODEL = "qwen3.5-plus"
 
 # ── 繁簡轉換（共用 trad_simp 模組） ──────────────────────────────────────────
 try:
@@ -486,6 +583,7 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
     for cat in target_cats:
         ops_for_cat = get_ops_needing_crawl(target_ops, cat)
         if ops_for_cat:
+            # ✏️ CHANGED: 過濾掉已經喺爬緊嘅 operator，防止重複 launch thread
             with _crawling_lock:
                 ops_to_start = [op for op in ops_for_cat if op not in _crawling_ops]
                 _crawling_ops.update(ops_to_start)
@@ -499,6 +597,7 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
                     try:
                         run_task_master(kw, ",".join(ops), c)
                     finally:
+                        # ✏️ CHANGED: 爬完（無論成功失敗）都釋放 lock
                         with _crawling_lock:
                             _crawling_ops.difference_update(ops)
                         print(f"🔓 爬蟲完成，釋放: {ops}")
@@ -507,8 +606,10 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
             else:
                 print(f"⏭️  [{cat}] {ops_for_cat} 已喺爬緊，跳過重複觸發")
 
+    if all_ops_to_crawl and df.empty:
+        return {"status": "loading", "message": "正在採集資料，請稍後重試..."}
     if all_ops_to_crawl:
-        return {"status": "loading", "message": "正在採集所選 organiser 與 Wynn 的對比資料，請稍後重試..."}
+        print("⚠️ 爬蟲進行中，目前用既有數據分析（結果可能不完整）")
 
     # 4. 日期過濾
     if from_date:
@@ -562,6 +663,19 @@ async def analyze(keyword: str, operators: str = "", category: str = "", from_da
     for op_key in target_ops:
         if op_key not in OP_KEYWORDS:
             continue
+
+        # ── Cache check：同一 operator + 日期範圍唔重複 call DeepSeek ──────────
+        _cached_acts = _get_analysis_cache(op_key, from_date, to_date, keyword)
+        if _cached_acts is not None:
+            print(f"💾 [{op_key}] 用 cache（{len(_cached_acts)} 個活動），跳過 DeepSeek")
+            all_summaries[op_key] = _cached_acts
+            for act in _cached_acts:
+                n  = act.get("name", "").strip()
+                nk = _norm_name(n)
+                if n and nk not in globally_extracted:
+                    globally_extracted[nk] = act
+            continue
+        # ── End cache check ───────────────────────────────────────────────────
 
         # 篩出屬於此運營商的帖文
         # ✏️ gov platform 帖文只靠 operator 字段匹配，唔做 keyword 匹配
@@ -973,13 +1087,13 @@ Category 判斷規則：
                         continue
 
                     new_act = {
-                        "name":            item_name,
-                        "description":     item_desc or "暫無描述",
-                        "date":            _resolve_overlapping_dates(item_date, post_text=all_snippets_text, activity_name=item_name),
-                        "location":        item.get("location") or "",
-                        "category":        cat_out,
-                        "sub_type":        sub,
-                        "source_post_ids": group_post_ids,
+                        "name":             item_name,
+                        "description":      item_desc or "暫無描述",
+                        "date":             _resolve_overlapping_dates(item_date, post_text=all_snippets_text, activity_name=item_name),
+                        "location":         item.get("location") or "",
+                        "category":         cat_out,
+                        "sub_type":         sub,
+                        "source_post_ids":  group_post_ids,
                         "source_event_ids": list(dict.fromkeys(group_event_ids)),
                     }
                     activities.append(new_act)
@@ -987,6 +1101,9 @@ Category 判斷規則：
                         globally_extracted[_norm_name(item_name)] = new_act
 
         all_summaries[op_key] = activities
+        # ── Save to cache ────────────────────────────────────────────────────
+        _set_analysis_cache(op_key, from_date, to_date, activities, keyword)
+        # ── End cache save ───────────────────────────────────────────────────
         for act in activities:
             n = act.get("name", "").strip()
             nk = _norm_name(n)
@@ -1038,18 +1155,21 @@ Category 判斷規則：
             from db_manager import DB_PATH as _SRC_DB_PATH
             _conn = _sq2.connect(_SRC_DB_PATH)
             _cur  = _conn.cursor()
+            # post_id in all tables uses full prefixed format: xhs_xxx, fb_xxx, etc.
+            # source_post_ids also uses same format — query directly, no stripping needed
+            all_ids_list = list(all_source_ids)
             for table, platform_name in [
                 ("posts_xhs", "xhs"), ("posts_ig", "ig"),
                 ("posts_fb", "fb"),   ("posts_weibo", "weibo"),
             ]:
                 try:
-                    placeholders = ",".join("?" * len(all_source_ids))
+                    placeholders = ",".join("?" * len(all_ids_list))
                     _cur.execute(f"""
                         SELECT post_id, published_at, post_url,
-                               substr(content, 1, 60) AS title_preview
+                               substr(content, 1, 500) AS title_preview
                         FROM {table}
                         WHERE post_id IN ({placeholders})
-                    """, list(all_source_ids))
+                    """, all_ids_list)
                     for pid, pub_at, post_url, title_preview in _cur.fetchall():
                         post_details[pid] = {
                             "post_id":      pid,
@@ -1061,6 +1181,7 @@ Category 判斷規則：
                 except _sq2.OperationalError:
                     pass
             _conn.close()
+            print(f"  📎 source_posts: {len(all_ids_list)} ids queried → {len(post_details)} found")
         except Exception as e:
             print(f"⚠️ source_posts 補充失敗（唔影響主結果）: {e}")
 
@@ -1068,6 +1189,7 @@ Category 判斷規則：
         for act in acts:
             ids = act.get("source_post_ids") or []
             act["source_posts"] = [post_details[i] for i in ids if i in post_details]
+            print(f"  📎 '{act.get('name','')}': {len(ids)} source_ids → {len(act['source_posts'])} matched posts")
 
     # ── Attach heat_score to every AI activity (aggregate from events_deduped) ─
     # source_event_ids stores events_deduped.event_id values (one deduped group = one row).
@@ -1357,8 +1479,8 @@ Wynn 官方定位參考（來自 Wynn Resorts Macau 官網）：
 唔需要任何解釋。"""
 
     try:
-        resp = client.chat.completions.create(
-            model=DEEPSEEK_REASON_MODEL,
+        resp = QWEN_RECOMMENDATION_CLIENT.chat.completions.create(
+            model=QWEN_RECOMMENDATION_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=700,
         )
@@ -1454,6 +1576,11 @@ def _require_admin(data: dict):
     finally:
         conn.close()
 
+@app.post("/api/analysis-cache/invalidate")
+async def invalidate_analysis_cache(operator: str = ""):
+    """db_manager 入庫後 call 呢個清 cache"""
+    _invalidate_analysis_cache(operator or None)
+    return {"success": True, "operator": operator or "all"}
 
 @app.post("/register")
 async def auth_register(request: Request):
@@ -1919,6 +2046,7 @@ async def _build_leaderboard_ai_payload(operators: str, category: str, top: int,
                 "platforms":     a.get("platforms") or [],
                 "platform_count":a.get("platform_count") or 0,
                 "source_count":  a.get("source_count") or 0,
+                "source_posts":  a.get("source_posts") or [],
             }
             for j, a in enumerate(acts[:3])
             if a.get("heat_score") is not None
@@ -1954,6 +2082,20 @@ async def heat_leaderboard_ai(
         cached_at, payload = _read_cache(conn, key)
 
         if payload:
+            # ── 24-hour TTL check ─────────────────────────────────────────────
+            # If cache is older than 24 hours, rebuild in background and serve stale
+            try:
+                from datetime import timezone as _tz
+                cached_dt = datetime.strptime(cached_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_tz.utc)
+                age_hours = (datetime.now(_tz.utc) - cached_dt).total_seconds() / 3600
+                payload["cache_age_hours"] = round(age_hours, 1)
+                if age_hours > 24:
+                    payload["stale"] = True
+                    # Trigger async rebuild (non-blocking — serve stale now)
+                    import asyncio as _aio
+                    _aio.create_task(_build_and_write_cache(operators, category, top, from_date, to_date, conn_factory=_heat_db_conn, key=key))
+            except Exception:
+                pass
             payload["cached_at"]   = cached_at
             payload["from_cache"]  = True
             return payload
@@ -1970,6 +2112,20 @@ async def heat_leaderboard_ai(
         return {"success": False, "message": str(e)}
     finally:
         conn.close()
+
+
+async def _build_and_write_cache(operators, category, top, from_date, to_date, conn_factory, key):
+    """Background task: rebuild stale cache without blocking the response."""
+    try:
+        payload = await _build_leaderboard_ai_payload(operators, category, top, from_date, to_date)
+        if payload.get("success"):
+            conn = conn_factory()
+            _ensure_cache_table(conn)
+            _write_cache(conn, key, payload)
+            conn.close()
+            print(f"[leaderboard-ai] Background cache refresh done for '{key}'")
+    except Exception as e:
+        print(f"[leaderboard-ai] Background cache refresh failed: {e}")
 
 
 @app.post("/api/heat/leaderboard-ai/refresh")

@@ -392,6 +392,11 @@ const API_AI         = `${API_BASE}/api/heat/leaderboard-ai`;
 const API_AI_REFRESH = `${API_BASE}/api/heat/leaderboard-ai/refresh`;
 const API_RAW        = `${API_BASE}/api/heat/leaderboard?top=10`;
 
+// ── Date sync from Operation Panel ───────────────────────────────────────────
+const _lbFrom = sessionStorage.getItem('_lbFromDate') || '';
+const _lbTo   = sessionStorage.getItem('_lbToDate')   || '';
+const _dateQ  = (_lbFrom && _lbTo) ? `?from_date=${_lbFrom}&to_date=${_lbTo}` : '';
+
 // ── Session passthrough ──────────────────────────────────────────────────────
 // Preserve session URL params when navigating back to Operation Panel
 (function(){
@@ -414,17 +419,20 @@ const OP_LABELS  = {melco:'Melco',sands:'Sands',wynn:'Wynn',galaxy:'Galaxy',mgm:
 const PLT_LABELS = {fb:'FB',ig:'IG',xhs:'XHS',weibo:'Weibo'};
 const PLT_ICONS  = {fb:'📘',ig:'📷',xhs:'📕',weibo:'🐦'};
 
+function esc(s){
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function actName(e){
-  if(e.name&&e.name.trim().length>2) return e.name.trim();
-  if(e.ai_name) return e.ai_name;
+  if(e.name&&e.name.trim().length>2) return esc(e.name.trim());
+  if(e.ai_name) return esc(e.ai_name);
   const m=(e.content||e.description||'').match(/【([^】]{4,40})】/);
-  if(m) return m[1];
+  if(m) return esc(m[1]);
   const t=e.content||e.description||'';
-  return t.slice(0,55)+(t.length>55?'…':'');
+  return esc(t.slice(0,55)+(t.length>55?'…':''));
 }
 function actDesc(e){
-  return(e.description||e.content||'').replace(/【[^】]*】/g,'').replace(/\n+/g,' ').trim();
+  return esc((e.description||e.content||'').replace(/【[^】]*】/g,'').replace(/\n+/g,' ').trim());
 }
 function flame(s){return s>=80?'🔥🔥🔥':s>=60?'🔥🔥':s>=35?'🔥':'❄️';}
 function tagOp(op){return`<span class="tag t-op">${OP_LABELS[op]||op}</span>`;}
@@ -447,7 +455,7 @@ function timeSince(iso){
 // ── Fetch ────────────────────────────────────────────────────────────────────
 async function fetchLeaderboard(){
   try{
-    let res=await fetch(API_AI);
+    let res=await fetch(API_AI + _dateQ);
     let data=res.ok?await res.json():null;
     if(!data||!data.success){
       console.warn('AI endpoint failed, falling back to raw leaderboard');
@@ -497,7 +505,7 @@ async function triggerRefresh(){
   document.getElementById('lb-list').innerHTML=
     `<div class="loading-state"><div class="spinner"></div><span>Running AI extraction + heat aggregation…<br><small>This takes ~60 seconds</small></span></div>`;
   try{
-    const res=await fetch(API_AI_REFRESH,{method:'POST'});
+    const res=await fetch(API_AI_REFRESH + _dateQ,{method:'POST'});
     const data=await res.json();
     if(data.success){ loadData(data); }
     else { document.getElementById('lb-list').innerHTML=`<div class="error-box">Refresh failed: ${data.message}</div>`; }
@@ -521,12 +529,12 @@ function renderTop10(){
     const postsHtml=srcPosts.length
       ?srcPosts.map(p=>`<div class="lb-post">
           <div class="post-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||'🔗'} ${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
-          <div class="post-body">${(p.title||'').slice(0,200)}</div>
+          <div class="post-body">${esc((p.title||'').slice(0,200))}</div>
           <a class="post-link" href="${p.url}" target="_blank" rel="noopener">🔗 View original post ↗</a>
         </div>`).join('')
       :`<div class="lb-post">
           <div class="post-head"><span class="plt-badge plt-${plt}">${PLT_ICONS[plt]||''} ${PLT_LABELS[plt]||plt}</span><span class="post-date">${e.newest_post||''}</span></div>
-          <div class="post-body">${(e.content||e.description||'').slice(0,300)}</div>
+          <div class="post-body">${esc((e.content||e.description||'').slice(0,300))}</div>
           ${purl?`<a class="post-link" href="${purl}" target="_blank" rel="noopener">🔗 View original post ↗</a>`:''}
         </div>`;
 
@@ -547,7 +555,7 @@ function renderTop10(){
       <div class="decay-lbl">${flame(e.heat_score||0)} decay ${((e.decay_factor||1)*100).toFixed(0)}%</div>
     </div>
   </div>
-  <div class="lb-posts" id="posts-${wid}">
+  <div class="lb-posts" id="posts-${wid}" style="display:none">
     ${postsHtml}
     ${(e.source_count||0)>1?`<div class="post-note">📊 This activity has <strong>${e.source_count}</strong> source posts across ${e.platform_count||plats.length} platform(s)</div>`:''}
   </div>
@@ -559,8 +567,10 @@ function toggleExpand(wid){
   const el=document.getElementById('posts-'+wid);
   const btn=document.getElementById('expbtn-'+wid);
   if(!el)return;
-  const open=el.classList.toggle('open');
-  if(btn)btn.textContent=open?'▲ Collapse':'▼ Source Posts';
+  const open=el.style.display==='flex';
+  el.style.display=open?'none':'flex';
+  el.style.flexDirection='column';
+  if(btn)btn.textContent=open?'▼ Source Posts':'▲ Collapse';
 }
 
 // ── Render Categories ────────────────────────────────────────────────────────
@@ -582,36 +592,56 @@ function renderCats(){
     const cards=items.length?items.map((e,j)=>{
       const plats=getPlats(e);const plt=plats[0]||'fb';const purl=buildUrl(e.event_id,plt);
       const cid=`cc-${cat}-${j}`;
-      const srcPosts=Array.isArray(e.source_posts)?e.source_posts.filter(p=>p.url):[];
+      // Show ALL source posts (no slice), include posts without URL too
+      const srcPosts=Array.isArray(e.source_posts)?e.source_posts:[];
+      const srcCount=e.source_count||srcPosts.length||1;
       const inlineHtml=srcPosts.length
-        ?srcPosts.slice(0,2).map(p=>`<div class="ci-post">
-            <div class="ci-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||''}${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
-            <div class="ci-body">${(p.title||'').slice(0,150)}</div>
-            <a class="ci-link" href="${p.url}" target="_blank" rel="noopener">🔗 View post ↗</a>
-          </div>`).join('')
+        ?srcPosts.map(p=>`<div class="ci-post">
+            <div class="ci-head">
+              <span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||'🔗'}${PLT_LABELS[p.platform]||p.platform}</span>
+              <span class="post-date">${p.published_at||''}</span>
+            </div>
+            <div class="ci-body">${esc((p.title||'').slice(0,400))}</div>
+            ${p.url?`<a class="ci-link" href="${p.url}" target="_blank" rel="noopener">🔗 View post ↗</a>`:'<span style="font-size:10px;color:var(--muted2);">No direct link available</span>'}
+          </div>`).join('')+
+          (srcCount>srcPosts.length?`<div style="font-size:11px;color:var(--muted2);padding:6px 0;">+ ${srcCount-srcPosts.length} more posts not shown</div>`:'')
         :`<div class="ci-post">
             <div class="ci-head"><span class="plt-badge plt-${plt}">${PLT_ICONS[plt]||''}${PLT_LABELS[plt]||plt}</span><span class="post-date">${e.newest_post||''}</span></div>
-            <div class="ci-body">${(e.content||e.description||'').slice(0,200)}</div>
-            ${purl?`<a class="ci-link" href="${purl}" target="_blank" rel="noopener">🔗 View post ↗</a>`:''}
+            <div class="ci-body">${esc((e.description||e.content||'').slice(0,400))}</div>
           </div>`;
       return `<div class="cat-card" id="${cid}">
   <div class="cat-top" onclick="toggleCatInline('${cid}')">
     <div class="cat-rank ${rnkCls[j]||'cr3'}">${j+1}</div>
     <div class="cat-heat">${(e.heat_score||0).toFixed(1)}</div>
   </div>
-  <div class="cat-body" onclick="toggleCatInline('${cid}')">
+  <div class="cat-body">
     <div class="cat-name">${actName(e)}</div>
     <div class="cat-desc">${actDesc(e)}</div>
-    <div class="cat-meta">${tagOp(e.operator)}${plats.slice(0,2).map(tagPlt).join('')}${tagSrc(e.source_count||1)}</div>
+    <div class="cat-meta" style="justify-content:space-between;align-items:center;">
+      <div style="display:flex;flex-wrap:wrap;gap:5px;">${tagOp(e.operator)}${plats.slice(0,2).map(tagPlt).join('')}${tagSrc(e.source_count||1)}</div>
+      <button onclick="toggleCatInline('${cid}')" id="ci-btn-${cid}" style="
+        font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:8px;
+        background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.20);
+        color:#1D4ED8;cursor:pointer;white-space:nowrap;transition:.15s;
+        font-family:inherit;">▼ Source Posts</button>
+    </div>
   </div>
-  <div class="cat-inline" id="ci-${cid}">${inlineHtml}</div>
+  <div class="cat-inline" id="ci-${cid}" style="display:none">${inlineHtml}</div>
 </div>`;
     }).join(''):`<div class="no-data">No data for this category</div>`;
     return `<div class="cat-panel${i===0?' active':''}" id="panel-${cat}">${cards}</div>`;
   }).join('');
 }
 
-function toggleCatInline(id){const el=document.getElementById('ci-'+id);if(el)el.classList.toggle('open');}
+function toggleCatInline(id){
+  const el=document.getElementById('ci-'+id);
+  if(!el)return;
+  const open=el.style.display==='flex';
+  el.style.display=open?'none':'flex';
+  el.style.flexDirection='column';
+  const btn=document.getElementById('ci-btn-'+id);
+  if(btn)btn.textContent=open?'▼ Source Posts':'▲ Hide Posts';
+}
 function switchCat(cat){
   document.querySelectorAll('.cat-tab').forEach(t=>t.classList.toggle('active',t.dataset.cat===cat));
   document.querySelectorAll('.cat-panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+cat));
@@ -621,7 +651,7 @@ function switchCat(cat){
 function renderMiniLb(){
   document.getElementById('mini-lb').innerHTML=TOP10.slice(0,5).map((e,i)=>{
     const rc=i<3?`mr${i+1}`:'';
-    return `<div class="mini-card" onclick='openDrawer(${JSON.stringify(e).replace(/"/g,"&quot;")})'>
+    return `<div class="mini-card" onclick='openDrawer(TOP10[${i}])'>
   <div class="mini-rnk ${rc}">${i+1}</div>
   <div class="mini-name">${actName(e)}</div>
   <div class="mini-score">${(e.heat_score||0).toFixed(1)}</div>
@@ -671,7 +701,7 @@ function openDrawer(e){
   const postsHtml=srcPosts.length
     ?srcPosts.map(p=>`<div class="src-post">
         <div class="src-head"><span class="plt-badge plt-${p.platform}">${PLT_ICONS[p.platform]||''} ${PLT_LABELS[p.platform]||p.platform}</span><span class="post-date">${p.published_at||''}</span></div>
-        <div class="src-body">${(p.title||'').slice(0,400)}</div>
+        <div class="src-body">${esc((p.title||'').slice(0,400))}</div>
         <a class="src-link" href="${p.url}" target="_blank" rel="noopener">🔗 View original post ↗</a>
       </div>`).join('')
     :`<div class="src-post">

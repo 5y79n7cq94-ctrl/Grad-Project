@@ -780,13 +780,39 @@ def _post_ingest_pipeline(new_post_ids: list):
 
     print(f"✅ [後處理] 完成")
 
+    # Step 3: Invalidate analysis cache
+    try:
+        import urllib.request as _ur
+        op = ""  # 清全部；如果你知道係邊個 operator 可以傳入
+        req = _ur.Request(
+            f"http://127.0.0.1:9038/api/analysis-cache/invalidate?operator={op}",
+            method="POST"
+        )
+        _ur.urlopen(req, timeout=10)
+        print(f"✅ [後處理] Analysis cache invalidated")
+    except Exception as e:
+        print(f"⚠️  [後處理] Cache invalidate 失敗（bridge.py 係咪跑緊？）: {e}")
+
+
+_pipeline_lock = _threading.Lock()
+
+def _post_ingest_pipeline_with_lock(new_post_ids: list):
+    """帶 lock 嘅 pipeline wrapper，防止多個平台同時觸發重複去重。"""
+    if not _pipeline_lock.acquire(blocking=False):
+        print(f"⏭️  [後處理] Pipeline 已跑緊，跳過（全量去重會覆蓋）")
+        return
+    try:
+        _post_ingest_pipeline(new_post_ids)
+    finally:
+        _pipeline_lock.release()
+
 
 def _trigger_post_ingest_pipeline(new_post_ids: list):
     """另開 background thread 觸發後處理，唔阻塞入庫主流程。"""
     if not new_post_ids:
         return
     t = _threading.Thread(
-        target=_post_ingest_pipeline,
+        target=_post_ingest_pipeline_with_lock,
         args=(new_post_ids,),
         daemon=True,
         name="post-ingest-pipeline",

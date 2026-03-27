@@ -1,6 +1,7 @@
 import os, sys, json, subprocess, glob, datetime, time, random, tempfile, requests
 from db_manager import ingest_crawler_data, mark_as_crawled
-
+from dotenv import load_dotenv
+load_dotenv()
 # ── Apify 設定 ─────────────────────────────────────────────
 APIFY_TOKEN   = api_token = os.getenv("APIFY_TOKEN")
 IG_ACTOR_ID   = "apify~instagram-scraper"

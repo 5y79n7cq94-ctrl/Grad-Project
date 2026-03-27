@@ -149,7 +149,8 @@ _COMMON_DDL = """
     category           TEXT,
     sub_type           TEXT,
     ingested_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    raw_json           TEXT
+    raw_json           TEXT,
+    embedding          TEXT
 """
 
 _EXTRA_COLS = {
@@ -169,6 +170,11 @@ def init_post_tables(conn: sqlite3.Connection):
                 {_EXTRA_COLS.get(plat, '')}
             )
         """)
+        # 舊 DB 冇 embedding 欄，自動補加
+        try:
+            cur.execute(f"ALTER TABLE posts_{plat} ADD COLUMN embedding TEXT")
+        except Exception:
+            pass  # 已經有就跳過
     conn.commit()
     print("✅ posts_xhs / posts_weibo / posts_ig / posts_fb 表已就緒")
 
