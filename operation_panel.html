@@ -944,16 +944,17 @@
         onmouseout="this.style.background='rgba(37,99,235,0.07)'">
         🗂️ Archived Reports
       </a>
-      <a href="./download_report.html" style="
-        display:inline-flex;align-items:center;gap:5px;
-        padding:6px 14px;border-radius:16px;
-        background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.20);
-        color:#15803D;font-size:12px;font-weight:650;
-        text-decoration:none;white-space:nowrap;transition:.15s;"
-        onmouseover="this.style.background='rgba(22,163,74,0.16)'"
-        onmouseout="this.style.background='rgba(22,163,74,0.08)'">
-        ⬇️ Download Report
-      </a>
+       <button onclick="collectReportData()" style="
+      display:inline-flex;align-items:center;gap:5px;
+      padding:6px 14px;border-radius:16px;
+      background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.20);
+      color:#15803D;font-size:12px;font-weight:650;
+      white-space:nowrap;transition:.15s;cursor:pointer;
+      font-family:var(--font);"
+      onmouseover="this.style.background='rgba(22,163,74,0.16)'"
+      onmouseout="this.style.background='rgba(22,163,74,0.08)'">
+      📄 Preview Report
+    </button>
     </div>
   </div>
 
@@ -4123,7 +4124,207 @@ function _chartDataSource() {
 if (typeof window._initPage === 'function') window._initPage();
 </script>
 
-<!-- Admin panel removed — IT Admins are redirected to admin_page.html -->
+<script>
+// ── Collect Report Data & open download_report.html ──────────────────────────
+async function collectReportData() {
+ 
+  // 1. Filters
+  const filters = {
+    operators:  (_appliedFilterState.operators  || []).slice(),
+    categories: (_appliedFilterState.categories || []).slice()
+  };
+ 
+  // 2. Period — panel uses resolveDateRange() which writes to hidden #fromDate / #toDate inputs
+  //    Read those hidden inputs directly.
+  const period = {
+    start: (document.getElementById('fromDate') || {}).value || '',
+    end:   (document.getElementById('toDate')   || {}).value || ''
+  };
+ 
+  // 3. KPIs from _chartCatData
+  const catData = _chartCatData || {};
+  const totalEvents = Object.values(catData).reduce((s,a) => s+a.length, 0);
+  const opCounts={}, catCounts={};
+  for (const [catKey, acts] of Object.entries(catData)) {
+    catCounts[catKey] = acts.length;
+    for (const act of acts) {
+      const op = (act.operator||'unknown').toLowerCase();
+      opCounts[op] = (opCounts[op]||0)+1;
+    }
+  }
+  const sortedOps  = Object.entries(opCounts).sort((a,b)=>b[1]-a[1]);
+  const sortedCats = Object.entries(catCounts).filter(([,n])=>n>0).sort((a,b)=>b[1]-a[1]);
+  const topOp  = sortedOps[0]?.[0]  ?? null;
+  const topCat = sortedCats[0]?.[0] ?? null;
+ 
+  const _OP_L  = {wynn:'Wynn',sands:'Sands',galaxy:'Galaxy',mgm:'MGM',melco:'Melco',sjm:'SJM',government:'Government'};
+  const _CAT_L = {concert:'Concert',sport:'Sport',crossover:'Crossover',exhibition:'Exhibition',experience:'Experience',food:'Food',accommodation:'Hotel',shopping:'Shopping',gaming:'Gaming'};
+ 
+  const kpis = {
+    totalEvents,
+    topOrganiser:        topOp  ? (_OP_L[topOp]  || topOp)  : '—',
+    topOrganiserCount:   sortedOps[0]?.[1]  ?? 0,
+    topCategory:         topCat ? (_CAT_L[topCat] || topCat) : '—',
+    topCategoryCount:    sortedCats[0]?.[1] ?? 0,
+    activeOrganiserCount: sortedOps.length
+  };
+ 
+  // 4. Summary paragraph
+  const top3Cats = sortedCats.slice(0,3).map(([k])=>_CAT_L[k]||k).join(', ');
+  const summary = {
+    paragraph: `This period covers ${totalEvents} event${totalEvents!==1?'s':''} across ${kpis.activeOrganiserCount} organiser${kpis.activeOrganiserCount!==1?'s':''}. ${kpis.topOrganiser} leads with ${kpis.topOrganiserCount} event${kpis.topOrganiserCount!==1?'s':''}. Top categories: ${top3Cats||'—'}.`
+  };
+ 
+  // 5. Events grouped by category (preserve raw date string — may include ranges like 2026-03-12~2026-03-22)
+  const _OP_C = {wynn:'#B45309',sands:'#1D4ED8',galaxy:'#047857',mgm:'#991B1B',melco:'#6D28D9',sjm:'#0E7490',government:'#374151'};
+  const events = {};
+  for (const [catKey, acts] of Object.entries(catData)) {
+    events[catKey] = acts.map(act => {
+      const opKey = (act.operator||'').toLowerCase();
+      return {
+        name:             act.name        || '',
+        description:      act.description || act.overview || act.desc || '',
+        organiser:        _OP_L[opKey]    || opKey,
+        organiserKey:     opKey,
+        organiserColor:   _OP_C[opKey]    || '#6B7280',
+        heat_score:       act.heat_score  ?? null,
+        date:             act.date        || '',   // kept raw — may be "YYYY-MM-DD~YYYY-MM-DD"
+        location:         act.location    || '',
+        predictedVisitors: act.predictedVisitors || act.predicted_visitors || ''
+      };
+    });
+  }
+ 
+  // 6. Heatmap data
+  const HM_OP_ORDER  = ['Wynn','Sands','Galaxy','MGM','Melco','SJM','Government'];
+  const HM_OP_LC_MAP = {Wynn:'wynn',Sands:'sands',Galaxy:'galaxy',MGM:'mgm',Melco:'melco',SJM:'sjm',Government:'government'};
+  const HM_CAT_ORDER = ['concert','exhibition','experience','sport','crossover','accommodation','food','shopping','gaming'];
+  const DEMO_CELLS = {
+    concert:       {wynn:{n:2,h:54.0},sands:{n:3,h:50.2},galaxy:{n:1,h:42.4},mgm:{n:2,h:50.0},melco:{n:3,h:57.7},sjm:{n:2,h:33.7},government:{n:0,h:null}},
+    food:          {wynn:{n:2,h:50.0},sands:{n:3,h:41.5},galaxy:{n:3,h:31.8},mgm:{n:2,h:43.4},melco:{n:2,h:59.6},sjm:{n:2,h:41.6},government:{n:1,h:29.0}},
+    exhibition:    {wynn:{n:2,h:43.6},sands:{n:2,h:50.9},galaxy:{n:3,h:48.2},mgm:{n:1,h:43.9},melco:{n:3,h:69.8},sjm:{n:2,h:52.7},government:{n:1,h:34.0}},
+    experience:    {wynn:{n:3,h:49.6},sands:{n:2,h:49.5},galaxy:{n:2,h:38.6},mgm:{n:3,h:53.9},melco:{n:2,h:63.7},sjm:{n:1,h:28.7},government:{n:2,h:35.0}},
+    crossover:     {wynn:{n:1,h:53.9},sands:{n:3,h:45.4},galaxy:{n:2,h:31.7},mgm:{n:2,h:42.8},melco:{n:3,h:68.3},sjm:{n:1,h:44.3},government:{n:1,h:30.0}},
+    shopping:      {wynn:{n:2,h:56.4},sands:{n:2,h:42.8},galaxy:{n:3,h:62.9},mgm:{n:1,h:18.6},melco:{n:1,h:27.0},sjm:{n:2,h:35.1},government:{n:0,h:null}},
+    accommodation: {wynn:{n:3,h:64.0},sands:{n:2,h:40.7},galaxy:{n:2,h:36.4},mgm:{n:3,h:54.8},melco:{n:2,h:59.1},sjm:{n:1,h:33.9},government:{n:0,h:null}},
+    sport:         {wynn:{n:1,h:44.0},sands:{n:2,h:71.8},galaxy:{n:2,h:63.1},mgm:{n:1,h:39.0},melco:{n:3,h:83.3},sjm:{n:1,h:34.0},government:{n:1,h:37.0}},
+    gaming:        {wynn:{n:3,h:62.0},sands:{n:3,h:55.0},galaxy:{n:1,h:41.0},mgm:{n:1,h:36.0},melco:{n:1,h:33.0},sjm:{n:1,h:31.0},government:{n:0,h:null}}
+  };
+  const hasLiveData = _hasAppliedFilters && Object.values(catData).some(a=>a&&a.length>0);
+  const heatmapData = {};
+  for (const cat of HM_CAT_ORDER) {
+    heatmapData[cat] = {};
+    for (const op of HM_OP_ORDER) {
+      const opLc = HM_OP_LC_MAP[op];
+      if (!hasLiveData) {
+        heatmapData[cat][opLc] = DEMO_CELLS[cat]?.[opLc] || {n:0,h:null};
+      } else {
+        const matching = (catData[cat]||[]).filter(a=>(a.operator||'').toLowerCase()===opLc);
+        const heats = matching.map(a=>parseFloat(a.heat_score)).filter(v=>isFinite(v));
+        heatmapData[cat][opLc] = {n:matching.length, h:heats.length?heats.reduce((s,v)=>s+v,0)/heats.length:null};
+      }
+    }
+  }
+ 
+  // 7. Chart data
+  const _CAT_C = {concert:'#7C3AED',sport:'#DC2626',crossover:'#D97706',exhibition:'#0891B2',experience:'#059669',food:'#EA580C',accommodation:'#2563EB',shopping:'#7C3AED',gaming:'#BE185D'};
+  const categoryMix = sortedCats.filter(([,n])=>n>0)
+    .map(([k,count])=>({catKey:k, label:_CAT_L[k]||k, color:_CAT_C[k]||'#6B7280', count}));
+  const heatByOrganiser = sortedOps.map(([opKey])=>{
+    const allActs = Object.values(catData).flat().filter(a=>(a.operator||'').toLowerCase()===opKey);
+    const heats = allActs.map(a=>parseFloat(a.heat_score)).filter(v=>isFinite(v));
+    return {organiserKey:opKey, label:_OP_L[opKey]||opKey, color:_OP_C[opKey]||'#6B7280',
+      avgHeat:heats.length?heats.reduce((s,v)=>s+v,0)/heats.length:0};
+  }).filter(o=>o.avgHeat>0);
+  const chartData = {categoryMix, heatByOrganiser};
+ 
+  // 8. Leaderboard (async from bridge.py)
+  let leaderboard = [];
+  try {
+    const res = await fetch('http://127.0.0.1:9038/api/heat/leaderboard-ai?top=10');
+    const lb  = await res.json();
+    if (lb.success && Array.isArray(lb.top_overall)) {
+      leaderboard = lb.top_overall.map(e=>({
+        rank:e.rank, name:e.name, description:e.description||'',
+        organiserKey:(e.operator||'').toLowerCase(),
+        organiser:_OP_L[(e.operator||'').toLowerCase()]||e.operator||'',
+        category:e.category||'', heat_score:e.heat_score??0,
+        decay_factor:e.decay_factor??1, newest_post:e.newest_post||'',
+        platforms:e.platforms||[], source_count:e.source_count||0
+      }));
+    }
+  } catch(e) { console.warn('Leaderboard fetch failed:',e); }
+ 
+  // 9. Hot themes — read from the DOM slot populated by fetchHotThemes()
+  //    Falls back to deriving from catData client-side if DOM slot is empty.
+  let hotThemes = [];
+  try {
+    const slot = document.getElementById('hotThemesSlot');
+    if (slot) {
+      // Each theme chip rendered by the panel has data-theme-label attribute, OR
+      // we can read text from the chip spans. Try to extract meaningful labels.
+      const chips = slot.querySelectorAll('span[data-label]');
+      if (chips.length) {
+        hotThemes = Array.from(chips).map(el => ({
+          label: el.getAttribute('data-label') || el.textContent.trim(),
+          icon:  el.getAttribute('data-icon')  || '🔥'
+        }));
+      } else {
+        // Fallback: derive top categories by event count × avg heat
+        const scores = [];
+        for (const [catKey, acts] of Object.entries(catData)) {
+          if (!acts || acts.length === 0) continue;
+          const _CAT_CONFIG_LOCAL = {
+            concert:{icon:'🎤',label:'Concert'}, sport:{icon:'🏆',label:'Sport'},
+            crossover:{icon:'🎨',label:'Crossover'}, exhibition:{icon:'🖼️',label:'Exhibition'},
+            experience:{icon:'✨',label:'Experience'}, food:{icon:'🍴',label:'Food'},
+            accommodation:{icon:'🏨',label:'Hotel'}, shopping:{icon:'💰',label:'Shopping'},
+            gaming:{icon:'🎰',label:'Gaming'}
+          };
+          const cfg = _CAT_CONFIG_LOCAL[catKey] || {icon:'📍',label:catKey};
+          const heats = acts.map(a=>parseFloat(a.heat_score)).filter(v=>isFinite(v));
+          const avgHeat = heats.length ? heats.reduce((s,v)=>s+v,0)/heats.length : 40;
+          scores.push({label:cfg.label, icon:cfg.icon, score:acts.length*(avgHeat/100)});
+        }
+        hotThemes = scores.sort((a,b)=>b.score-a.score).slice(0,3);
+      }
+    }
+  } catch(e) { console.warn('Hot themes extraction failed:', e); hotThemes=[]; }
+ 
+  // 10. AI Strategy
+  let comparisons=[], recommendations='';
+  try {
+    const selectedOps = promptSelectedOpTitles();
+    const allEvents   = getPromptEvents();
+    const rawComps    = buildCategoryComparisons(allEvents, selectedOps);
+    comparisons = rawComps.map(item=>({
+      catKey:item.catKey, label:item.label,
+      wynn:{count:item.wynn.count, avgHeat:item.wynn.avg, topEventName:item.wynn.topEvent?.name||''},
+      topOpponent:item.topOpponent?{organiser:item.topOpponent.opTitle,count:item.topOpponent.count,avgHeat:item.topOpponent.avg,topEventName:item.topOpponent.topEvent?.name||''}:null,
+      wynnLeads:item.wynn.count>0&&(!item.topOpponent||item.wynn.avg>item.topOpponent.avg)
+    }));
+    const promptList = typeof getPromptListEl==='function' ? getPromptListEl() : null;
+    if (promptList) {
+      const items = promptList.querySelectorAll('.prompt-item');
+      if (items[2]) recommendations = items[2].querySelector('.prompt-item-body')?.innerText||'';
+    }
+  } catch(e) { console.warn('AI strategy extraction failed:',e); }
+ 
+  const perspective = (typeof DEMO!=='undefined'&&DEMO.perspective) ? DEMO.perspective : {};
+  const aiStrategy = {comparisons, recommendations, perspective};
+ 
+  // 11. Assemble & save
+  const reportData = {
+    generatedAt: new Date().toISOString(),
+    period, filters, kpis, summary, events,
+    heatmapData, chartData, leaderboard,
+    hotThemes, aiStrategy
+  };
+ 
+  localStorage.setItem('macauReportData', JSON.stringify(reportData));
+  window.open('download_report.html', '_blank');
+}
+</script>
 
 </body>
 </html>

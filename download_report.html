@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Macau Integrated Resorts · Market Report</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: #F5F5F5; color: #1E1E1E; }
+
+    /* ── Topbar ── */
+    .topbar { position:sticky; top:0; z-index:100; background:#2C3E50; color:white; padding:12px 28px; display:flex; justify-content:space-between; align-items:center; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.25); }
+    .topbar-left { display:flex; flex-direction:column; gap:2px; }
+    .topbar-title { font-size:17px; font-weight:700; }
+    .topbar-sub { font-size:12px; opacity:.75; }
+    .topbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .tb-btn { padding:7px 16px; border:1.5px solid rgba(255,255,255,.35); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; background:transparent; color:white; transition:background .15s; font-family:inherit; }
+    .tb-btn:hover { background:rgba(255,255,255,.15); }
+    .tb-btn.primary { background:white; color:#2C3E50; border-color:white; }
+    .tb-btn.primary:hover { background:#e8edf2; }
+    #filterSummary { display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11.5px; }
+    .fs-pill { padding:3px 10px; border-radius:20px; font-weight:600; font-size:11px; background:rgba(255,255,255,.18); color:rgba(255,255,255,.92); }
+    .fs-label { font-size:11px; opacity:.65; white-space:nowrap; }
+
+    /* ── Pages ── */
+    #pdf-content { padding:28px 20px 60px; max-width:960px; margin:0 auto; }
+    .pdf-page { background:white; max-width:900px; margin:0 auto 30px; padding:36px 45px; border-radius:4px; box-shadow:0 5px 20px rgba(0,0,0,.08); }
+
+    /* ── Shared mini-header (pages 2-4) ── */
+    .page-mini-header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #2C3E50; padding-bottom:10px; margin-bottom:20px; }
+    .pmt { font-size:13px; font-weight:700; color:#2C3E50; }
+    .pms { font-size:11px; color:#999; font-style:italic; }
+
+    /* ── Cover ── */
+    .cover-header { border-bottom:3px solid #2C3E50; padding-bottom:18px; margin-bottom:22px; }
+    .cover-title { font-size:28px; font-weight:800; color:#1E1E1E; line-height:1.25; }
+    .cover-meta { font-size:13px; color:#666; margin-top:8px; font-style:italic; }
+    .cover-gen { font-size:12px; color:#999; margin-top:4px; }
+    .summary-block { font-size:14px; color:#333; line-height:1.85; padding:14px 18px; background:#F7F8FA; border-left:4px solid #2C3E50; border-radius:0 6px 6px 0; margin-bottom:18px; }
+    .kpi-value { font-size:26px; font-weight:800; color:#1E1E1E; }
+    .kpi-label { font-size:13px; font-weight:600; color:#2C3E50; margin-top:4px; }
+    .kpi-sub { font-size:11px; color:#888; margin-top:3px; }
+    .filter-chip { padding:4px 12px; border-radius:20px; font-size:11.5px; font-weight:600; background:rgba(44,62,80,.09); color:#2C3E50; }
+    .filter-chip.cat { background:rgba(124,58,237,.10); color:#5B21B6; }
+
+    /* ── Events ── */
+    .cat-section { margin-bottom:22px; }
+    .cat-header { display:flex; align-items:center; gap:8px; margin-bottom:11px; padding:7px 12px; border-radius:8px; background:#F4F5F7; }
+    .cat-icon { font-size:17px; }
+    .cat-name { font-size:15px; font-weight:700; color:#1E1E1E; }
+    .cat-count { padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:700; color:white; margin-left:4px; }
+    .event-card { margin:0 0 10px 4px; padding:11px 15px; border-left:4px solid #CCC; border-radius:0 8px 8px 0; background:#FAFAFA; }
+    .event-name { font-size:14px; font-weight:700; color:#1E1E1E; margin-bottom:4px; }
+    .event-desc { font-size:12.5px; color:#666; font-style:italic; margin-bottom:7px; line-height:1.5; }
+    .event-badges { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .ev-badge { padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+    .ev-op { color:white; font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; }
+    .ev-heat { background:rgba(249,115,22,.12); color:#C2410C; }
+    .ev-date { background:rgba(15,23,42,.07); color:#374151; }
+    .ev-loc  { background:rgba(5,150,105,.10); color:#065F46; }
+    .ev-vis  { background:rgba(37,99,235,.10); color:#1D4ED8; }
+
+    /* ── Analytics ── */
+    .chart-block { background:#FAFAFA; border:1px solid #E8EAEE; border-radius:10px; padding:18px; margin-bottom:18px; }
+    .chart-title { font-size:13.5px; font-weight:700; color:#2C3E50; margin-bottom:3px; }
+    .chart-sub { font-size:11.5px; color:#999; margin-bottom:12px; }
+    .donut-wrap { display:flex; align-items:center; gap:20px; }
+    .donut-legend { display:flex; flex-direction:column; gap:7px; }
+    .legend-row { display:flex; align-items:center; gap:7px; font-size:12px; }
+    .legend-dot { width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+    .legend-val { font-weight:700; color:#1E1E1E; margin-left:auto; padding-left:10px; }
+    .lb-item { display:flex; align-items:flex-start; gap:12px; padding:9px 0; border-bottom:1px solid #F0F0F0; }
+    .lb-item:last-child { border-bottom:none; }
+    .lb-rank { width:26px; height:26px; border-radius:50%; flex-shrink:0; display:grid; place-items:center; font-size:11px; font-weight:800; color:white; }
+    .lb-body { flex:1; min-width:0; }
+    .lb-name { font-size:13px; font-weight:700; color:#1E1E1E; margin-bottom:4px; }
+    .lb-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .lb-chip { padding:2px 8px; border-radius:20px; font-size:10.5px; font-weight:600; background:rgba(15,23,42,.07); color:#374151; }
+
+    @media print {
+      body { background:white; }
+      .topbar { display:none !important; }
+      .pdf-page { box-shadow:none; border-radius:0; margin:0; padding:30px 36px; }
+      #pdf-content { padding:0; max-width:100%; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-title">Macau Resort Analytics</div>
+    <div class="topbar-sub">Market Report</div>
+  </div>
+  <div class="topbar-right">
+    <div id="filterSummary">Loading…</div>
+    <button class="tb-btn" onclick="goBack()">← Back</button>
+    <button class="tb-btn primary" onclick="downloadPDF()">⬇ Download PDF</button>
+  </div>
+</div>
+
+<div id="pdf-content">
+  <div class="pdf-page" id="page-cover"></div>
+  <div class="pdf-page" id="page-events"></div>
+  <div class="pdf-page" id="page-analytics"></div>
+  <div class="pdf-page" id="page-strategy"></div>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────────
+const OP_KEYS   = ['wynn','sands','galaxy','mgm','melco','sjm','government'];
+const OP_LABELS = { wynn:'Wynn', sands:'Sands', galaxy:'Galaxy', mgm:'MGM', melco:'Melco', sjm:'SJM', government:'Government' };
+const OP_COLORS = { wynn:'#B45309', sands:'#1D4ED8', galaxy:'#047857', mgm:'#991B1B', melco:'#6D28D9', sjm:'#0E7490', government:'#374151' };
+const CAT_ORDER = ['concert','exhibition','experience','sport','crossover','accommodation','food','shopping','gaming'];
+const CAT_CONFIG = {
+  concert:       { icon:'🎤', label:'Concert',     color:'#7C3AED' },
+  sport:         { icon:'🏆', label:'Sport',        color:'#DC2626' },
+  crossover:     { icon:'🎨', label:'Crossover',    color:'#D97706' },
+  exhibition:    { icon:'🖼️',  label:'Exhibition',  color:'#0891B2' },
+  experience:    { icon:'✨', label:'Experience',   color:'#059669' },
+  food:          { icon:'🍴', label:'Food',         color:'#EA580C' },
+  accommodation: { icon:'🏨', label:'Hotel',        color:'#2563EB' },
+  shopping:      { icon:'💰', label:'Shopping',     color:'#7C3AED' },
+  gaming:        { icon:'🎰', label:'Gaming',       color:'#BE185D' },
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function isoDate(s) {
+  if (!s || s === 'N/A') return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s.length <= 10 ? s + 'T00:00:00' : s);
+  if (isNaN(d)) return s;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Preserve full date range "2026-03-12~2026-03-22" → "2026-03-12 ~ 2026-03-22"
+function fmtDate(raw) {
+  if (!raw || raw === 'N/A') return '';
+  if (raw.includes('~')) {
+    const [a, b] = raw.split('~').map(s => s.trim());
+    const ia = isoDate(a), ib = isoDate(b);
+    return ia === ib ? ia : `${ia} ~ ${ib}`;
+  }
+  return isoDate(raw);
+}
+
+function fmtPeriod(start, end) {
+  const s = isoDate(start), e = isoDate(end);
+  if (!s && !e) return 'All Dates';
+  if (s && e && s !== e) return `${s} – ${e}`;
+  return s || e || 'All Dates';
+}
+
+function fmtGenerated(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function hmColour(value) {
+  const v = Math.max(0, Math.min(100, Number(value)||0));
+  const ratio = v/100;
+  const stops = [[255,245,245],[254,205,211],[251,113,133],[225,29,72],[136,19,55]];
+  const pos = ratio*(stops.length-1), lo = Math.floor(pos), hi = Math.min(stops.length-1, lo+1), t = pos-lo;
+  const r = Math.round(stops[lo][0]+(stops[hi][0]-stops[lo][0])*t);
+  const g = Math.round(stops[lo][1]+(stops[hi][1]-stops[lo][1])*t);
+  const b = Math.round(stops[lo][2]+(stops[hi][2]-stops[lo][2])*t);
+  return { bg:`rgb(${r},${g},${b})`, text: ratio < 0.55 ? '#3B0A15' : '#fff' };
+}
+
+function goBack() {
+  if (window.opener && !window.opener.closed) { window.opener.focus(); window.close(); }
+  else window.close();
+}
+
+// ── Mini-header: repeats on pages 2-4 ────────────────────────────────────────
+function miniHeader(data, pageLabel) {
+  const period = fmtPeriod(data.period?.start, data.period?.end);
+  return `<div class="page-mini-header">
+    <div><div class="pmt">Macau Integrated Resorts · Market Report</div><div class="pms">${esc(pageLabel)}</div></div>
+    <div class="pms">${esc(period)}</div>
+  </div>`;
+}
+
+// ── Bold key numbers & names in summary ──────────────────────────────────────
+function boldSummary(para, kpis, hotThemes) {
+  if (!para) return '—';
+  let s = esc(para);
+
+  // Bold numbers (longest first to avoid nested partial replacement)
+  const nums = [kpis.totalEvents, kpis.topOrganiserCount, kpis.topCategoryCount, kpis.activeOrganiserCount]
+    .filter(n => n != null).map(String).sort((a,b) => b.length-a.length);
+  for (const n of nums) s = s.replace(new RegExp(`\\b${n}\\b`,'g'), `<strong>${n}</strong>`);
+
+  // Bold names
+  const names = [kpis.topOrganiser, kpis.topCategory].filter(Boolean).sort((a,b) => b.length-a.length);
+  for (const name of names) {
+    const safe = esc(name).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    s = s.replace(new RegExp(`(?<![\\w>])${safe}(?![\\w<])`,'g'), `<strong>${esc(name)}</strong>`);
+  }
+
+  // Append hot themes if present
+  if (hotThemes && hotThemes.length) {
+    const themeStr = hotThemes.map(t => `<strong>${esc(t.label)}</strong>`).join(', ');
+    s += ` Hot themes: ${themeStr}.`;
+  }
+  return s;
+}
+
+// ── Topbar ────────────────────────────────────────────────────────────────────
+function renderTopbar(data) {
+  const ops  = (data.filters?.operators  || []).map(k => OP_LABELS[k]||k);
+  const cats = (data.filters?.categories || []).map(k => CAT_CONFIG[k]?.label||k);
+  const total = data.kpis?.totalEvents ?? 0;
+  let html = '';
+  if (ops.length)  html += `<span class="fs-label">Organisers:</span>${ops.map(o=>`<span class="fs-pill">${esc(o)}</span>`).join('')} `;
+  if (cats.length) html += `<span class="fs-label">Categories:</span>${cats.map(c=>`<span class="fs-pill">${esc(c)}</span>`).join('')} `;
+  html += `<span class="fs-pill">${total} event${total!==1?'s':''}</span>`;
+  document.getElementById('filterSummary').innerHTML = html;
+}
+
+// ── Page 1 — Cover ────────────────────────────────────────────────────────────
+function renderCover(data) {
+  const kpis = data.kpis || {};
+  const ops  = (data.filters?.operators  || []).map(k => OP_LABELS[k]||k);
+  const cats = (data.filters?.categories || []).map(k => CAT_CONFIG[k]?.label||k);
+  const hotThemes = data.hotThemes || [];
+  const period = fmtPeriod(data.period?.start, data.period?.end);
+
+  // Hot theme chips
+  const themeColors = ['#DC2626','#D97706','#7C3AED','#059669','#0891B2'];
+  const hotThemeHtml = hotThemes.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:22px;">
+        <span style="font-size:12px;font-weight:700;color:#777;margin-right:2px;">🔥 Hot Themes:</span>
+        ${hotThemes.map((t,i)=>`<span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;background-color:${themeColors[i]||'#6B7280'}18;color:${themeColors[i]||'#6B7280'};border:1px solid ${themeColors[i]||'#6B7280'}30;">${esc(t.icon||'🔥')} ${esc(t.label)}</span>`).join('')}
+      </div>` : '';
+
+  // KPI table (table-based for PDF compat)
+  const kpiCell = (val, label, sub, color) =>
+    `<td style="width:50%;padding:8px;">
+      <div style="border:1px solid #E5E7EB;border-radius:10px;padding:15px 18px;border-top:4px solid ${color};background:#FAFAFA;">
+        <div class="kpi-value">${esc(String(val ?? '—'))}</div>
+        <div class="kpi-label">${label}</div>
+        <div class="kpi-sub">${sub}</div>
+      </div>
+    </td>`;
+
+  document.getElementById('page-cover').innerHTML = `
+    <div class="cover-header">
+      <div class="cover-title">Macau Integrated Resorts<br/>Market Report</div>
+      <div class="cover-meta">Reporting Period: ${esc(period)}</div>
+      <div class="cover-gen">Generated: ${fmtGenerated(data.generatedAt)}</div>
+    </div>
+
+    <div class="summary-block">${boldSummary(data.summary?.paragraph, kpis, hotThemes)}</div>
+
+    ${hotThemeHtml}
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:22px;">
+      <tr>
+        ${kpiCell(kpis.totalEvents, 'Total Events', 'Across all active categories', OP_COLORS[(kpis.topOrganiser||'').toLowerCase()]||'#2C3E50')}
+        ${kpiCell(kpis.topOrganiser, 'Top Organiser', `${kpis.topOrganiserCount??0} event${kpis.topOrganiserCount!==1?'s':''} this period`, OP_COLORS[(kpis.topOrganiser||'').toLowerCase()]||'#2C3E50')}
+      </tr>
+      <tr>
+        ${kpiCell(kpis.topCategory, 'Top Category', `${kpis.topCategoryCount??0} event${kpis.topCategoryCount!==1?'s':''} this period`, CAT_CONFIG[(kpis.topCategory||'').toLowerCase()]?.color||'#2C3E50')}
+        ${kpiCell(kpis.activeOrganiserCount, 'Active Organisers', 'With at least 1 event', '#2C3E50')}
+      </tr>
+    </table>
+
+    <div>
+      <div style="font-size:12px;font-weight:700;color:#777;margin-bottom:8px;">Active Filters</div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
+        ${ops.length  ? '<span style="font-size:12px;font-weight:700;color:#777;margin-right:4px;">Organisers:</span>'+ops.map(o=>`<span class="filter-chip">${esc(o)}</span>`).join('') : ''}
+        ${cats.length ? '<span style="font-size:12px;font-weight:700;color:#777;margin-left:8px;margin-right:4px;">Categories:</span>'+cats.map(c=>`<span class="filter-chip cat">${esc(c)}</span>`).join('') : ''}
+        ${!ops.length && !cats.length ? '<span style="font-size:12px;color:#999;">No filters applied</span>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ── Page 2 — Events by Category ──────────────────────────────────────────────
+function renderEvents(data) {
+  const events = data.events || {};
+  let html = miniHeader(data, '2. Events Overview');
+  html += `<div style="font-size:12.5px;color:#888;margin-bottom:18px;margin-top:-10px;">Grouped by category · Filtered results</div>`;
+
+  let anyCat = false;
+  for (const catKey of CAT_ORDER) {
+    const list = events[catKey];
+    if (!list || list.length === 0) continue;
+    anyCat = true;
+    const cfg = CAT_CONFIG[catKey] || { icon:'📌', label:catKey, color:'#6B7280' };
+    html += `<div class="cat-section">
+      <div class="cat-header">
+        <span class="cat-icon">${cfg.icon}</span>
+        <span class="cat-name">${esc(cfg.label)}</span>
+        <span class="cat-count" style="background:${cfg.color};">${list.length}</span>
+      </div>`;
+    for (const ev of list) {
+      const opColor = ev.organiserColor || OP_COLORS[ev.organiserKey] || '#6B7280';
+      const dateStr = fmtDate(ev.date);
+      html += `<div class="event-card" style="border-left-color:${opColor};">
+        <div class="event-name">${esc(ev.name||'—')}</div>
+        ${ev.description ? `<div class="event-desc">${esc(ev.description)}</div>` : ''}
+        <div class="event-badges">
+          <span class="ev-op" style="background:${opColor};">${esc(ev.organiser||ev.organiserKey||'—')}</span>
+          ${ev.heat_score != null ? `<span class="ev-badge ev-heat">🔥 ${Number(ev.heat_score).toFixed(1)}</span>` : ''}
+          ${dateStr ? `<span class="ev-badge ev-date">📅 ${esc(dateStr)}</span>` : ''}
+          ${ev.location ? `<span class="ev-badge ev-loc">📍 ${esc(ev.location)}</span>` : ''}
+          ${ev.predictedVisitors ? `<span class="ev-badge ev-vis">👥 ${esc(ev.predictedVisitors)}</span>` : ''}
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+  if (!anyCat) html += `<div style="padding:30px;text-align:center;color:#999;font-size:14px;">No events found for the applied filters.</div>`;
+  document.getElementById('page-events').innerHTML = html;
+}
+
+// ── Page 3 — Analytics ────────────────────────────────────────────────────────
+function renderAnalytics(data) {
+  document.getElementById('page-analytics').innerHTML = miniHeader(data, '3. Analytics') + `
+    <table style="width:100%;border-collapse:collapse;margin-bottom:18px;">
+      <tr>
+        <td style="width:48%;padding:0 9px 0 0;vertical-align:top;">
+          <div class="chart-block">
+            <div class="chart-title">Category Mix</div>
+            <div class="chart-sub">Event distribution by category</div>
+            <div id="donut-inner"></div>
+          </div>
+        </td>
+        <td style="width:52%;padding:0 0 0 9px;vertical-align:top;">
+          <div class="chart-block">
+            <div class="chart-title">Heat Score by Organiser</div>
+            <div class="chart-sub">Average heat score per organiser</div>
+            <div id="bar-inner"></div>
+          </div>
+        </td>
+      </tr>
+    </table>
+    <div class="chart-block">
+      <div class="chart-title">Activity Heatmap</div>
+      <div class="chart-sub">Organiser × Category — event count &amp; avg heat score</div>
+      <div id="hm-inner"></div>
+    </div>
+    <div class="chart-block">
+      <div class="chart-title">Heat Leaderboard — Top 10</div>
+      <div class="chart-sub">Ranked by heat score</div>
+      <div id="lb-inner"></div>
+    </div>`;
+  renderDonut(data);
+  renderBar(data);
+  renderHeatmap(data);
+  renderLeaderboard(data);
+}
+
+// ── Doughnut SVG ──────────────────────────────────────────────────────────────
+function describeArc(cx, cy, r, sa, ea) {
+  const rad = a => (a-90)*Math.PI/180;
+  return `M ${cx+r*Math.cos(rad(sa))} ${cy+r*Math.sin(rad(sa))} A ${r} ${r} 0 ${(ea-sa)>180?1:0} 1 ${cx+r*Math.cos(rad(ea))} ${cy+r*Math.sin(rad(ea))}`;
+}
+function renderDonut(data) {
+  const mix = (data.chartData?.categoryMix||[]).filter(d=>d.count>0);
+  if (!mix.length) { document.getElementById('donut-inner').innerHTML='<div style="color:#999;font-size:13px;font-style:italic;">No data</div>'; return; }
+  const total = mix.reduce((s,d)=>s+d.count,0);
+  const cx=110,cy=110,r=80,sw=38;
+  let paths='',angle=0;
+  for (const d of mix) { const end=angle+(d.count/total)*360; paths+=`<path d="${describeArc(cx,cy,r,angle,Math.min(end,angle+359.99))}" fill="none" stroke="${d.color}" stroke-width="${sw}"/>`; angle=end; }
+  const legend = mix.map(d=>`<div class="legend-row"><span class="legend-dot" style="background:${d.color};"></span><span style="font-size:12px;color:#444;">${esc(d.label)}</span><span class="legend-val">${d.count}</span></div>`).join('');
+  document.getElementById('donut-inner').innerHTML=`<div class="donut-wrap">
+    <svg width="220" height="220" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg">${paths}
+      <text x="${cx}" y="${cy-8}" text-anchor="middle" font-size="22" font-weight="800" fill="#1E1E1E">${total}</text>
+      <text x="${cx}" y="${cy+12}" text-anchor="middle" font-size="10" fill="#888">events</text>
+    </svg>
+    <div class="donut-legend">${legend}</div>
+  </div>`;
+}
+
+// ── Bar Chart SVG — width:100% so PDF doesn't clip ───────────────────────────
+function renderBar(data) {
+  const bars = (data.chartData?.heatByOrganiser||[]).filter(d=>d.avgHeat>0);
+  if (!bars.length) { document.getElementById('bar-inner').innerHTML='<div style="color:#999;font-size:13px;font-style:italic;">No data</div>'; return; }
+  const barH=24, gap=10, labelW=72, barAreaW=200, valW=46;
+  const svgW = labelW+barAreaW+valW;
+  const svgH = bars.length*(barH+gap)-gap+6;
+  let rows='';
+  bars.forEach((d,i)=>{
+    const y=i*(barH+gap), bw=Math.round((d.avgHeat/100)*barAreaW);
+    rows+=`
+      <text x="${labelW-6}" y="${y+barH-7}" text-anchor="end" font-size="11" font-weight="600" fill="#374151">${esc(d.label)}</text>
+      <rect x="${labelW}" y="${y}" width="${bw}" height="${barH}" rx="4" fill="${d.color}" opacity=".85"/>
+      <text x="${labelW+bw+6}" y="${y+barH-7}" font-size="11" font-weight="700" fill="${d.color}">${d.avgHeat.toFixed(1)}</text>`;
+  });
+  // width="100%" + preserveAspectRatio ensures it fills the cell and never clips in PDF
+  document.getElementById('bar-inner').innerHTML=
+    `<svg width="100%" viewBox="0 0 ${svgW} ${svgH}" preserveAspectRatio="xMinYMid meet" xmlns="http://www.w3.org/2000/svg">${rows}</svg>`;
+}
+
+// ── Heatmap — fully inline styles for PDF ─────────────────────────────────────
+function renderHeatmap(data) {
+  const hm = data.heatmapData||{};
+  const filterCats = data.filters?.categories||[];
+  const activeCats = filterCats.length>0
+    ? CAT_ORDER.filter(c=>filterCats.includes(c)&&hm[c])
+    : CAT_ORDER.filter(c=>hm[c]);
+  if (!activeCats.length) { document.getElementById('hm-inner').innerHTML='<div style="color:#999;font-size:13px;font-style:italic;">No heatmap data</div>'; return; }
+
+  let t=`<table style="border-collapse:collapse;width:100%;font-size:11px;font-family:ui-sans-serif,sans-serif;">`;
+  t+=`<tr><th style="padding:5px 8px;text-align:left;font-size:10px;color:#555;font-weight:700;"></th>`;
+  for (const c of activeCats) { const cfg=CAT_CONFIG[c]||{icon:'',label:c}; t+=`<th style="padding:5px 6px;text-align:center;font-size:10px;color:#555;font-weight:700;">${cfg.icon} ${esc(cfg.label)}</th>`; }
+  t+=`</tr>`;
+  for (const opKey of OP_KEYS) {
+    t+=`<tr><td style="padding:6px 8px;text-align:left;font-size:11px;font-weight:700;color:#374151;white-space:nowrap;">${esc(OP_LABELS[opKey])}</td>`;
+    for (const cat of activeCats) {
+      const cell=hm[cat]?.[opKey];
+      if (!cell||cell.n===0) { t+=`<td style="padding:7px 8px;text-align:center;font-size:10.5px;font-weight:600;border:1px solid rgba(0,0,0,.06);background-color:#F3F4F6;color:#9CA3AF;">0</td>`; }
+      else { const col=hmColour(cell.h||0); t+=`<td style="padding:7px 8px;text-align:center;font-size:10.5px;font-weight:600;border:1px solid rgba(0,0,0,.06);background-color:${col.bg};color:${col.text};">${cell.n}<br><span style="font-size:9px;opacity:.85;">🔥${cell.h!=null?cell.h.toFixed(0):'—'}</span></td>`; }
+    }
+    t+=`</tr>`;
+  }
+  t+=`</table>`;
+  document.getElementById('hm-inner').innerHTML=`<div style="overflow-x:auto;">${t}</div>`;
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+function renderLeaderboard(data) {
+  const lb=data.leaderboard||[];
+  if (!lb.length) { document.getElementById('lb-inner').innerHTML=`<div style="color:#999;font-size:13px;font-style:italic;">Leaderboard data unavailable. Ensure bridge.py is running.</div>`; return; }
+  const rankBg=['#F59E0B','#9CA3AF','#B45309'];
+  const items=lb.slice(0,10).map(e=>{
+    const bg=rankBg[e.rank-1]||'#CBD5E1';
+    const opColor=OP_COLORS[(e.organiserKey||e.operator||'').toLowerCase()]||'#6B7280';
+    const catCfg=CAT_CONFIG[e.category]||{};
+    return `<div class="lb-item">
+      <div class="lb-rank" style="background:${bg};">${e.rank}</div>
+      <div class="lb-body">
+        <div class="lb-name">${esc(e.name)}</div>
+        <div class="lb-meta">
+          <span class="lb-chip" style="background-color:${opColor}18;color:${opColor};">${esc(e.organiser||e.operator||'—')}</span>
+          ${catCfg.label?`<span class="lb-chip">${catCfg.icon||''} ${esc(catCfg.label)}</span>`:''}
+          <span class="ev-badge ev-heat">🔥 ${Number(e.heat_score).toFixed(1)}</span>
+          ${e.newest_post?`<span class="ev-badge ev-date">📅 ${esc(isoDate(e.newest_post))}</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('lb-inner').innerHTML=items;
+}
+
+// ── Page 4 — AI Strategy ──────────────────────────────────────────────────────
+function renderStrategy(data) {
+  const ai=data.aiStrategy||{};
+  let html=miniHeader(data,'4. AI Strategy');
+
+  html+=`<div style="margin-bottom:24px;">
+    <div style="font-size:15px;font-weight:700;color:#2C3E50;margin-bottom:12px;">Wynn Market Positioning</div>`;
+  const comps=ai.comparisons||[];
+  if (comps.length) {
+    for (const c of comps) {
+      const cfg=CAT_CONFIG[c.catKey]||{icon:'📌',label:c.label||c.catKey,color:'#6B7280'};
+      const badge=c.wynnLeads
+        ?`<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;background-color:rgba(5,150,105,.12);color:#065F46;">✓ Leads</span>`
+        :`<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;background-color:rgba(220,38,38,.12);color:#991B1B;">↓ Gap</span>`;
+      html+=`<div style="margin-bottom:12px;padding:13px 15px;border:1px solid #E8EAEE;border-radius:10px;background:#FAFAFA;">
+        <div style="margin-bottom:7px;"><span style="display:inline-block;padding:3px 11px;border-radius:20px;font-size:12px;font-weight:700;color:white;background-color:${cfg.color};">${cfg.icon} ${esc(cfg.label)}</span></div>
+        <div style="font-size:13px;color:#374151;margin:4px 0;"><strong>Wynn</strong> — ${c.wynn?.count??0} event${c.wynn?.count!==1?'s':''}, avg heat ${(c.wynn?.avgHeat||0).toFixed(1)} &nbsp;${badge}${c.wynn?.topEventName?`<span style="font-size:12px;color:#666;margin-left:8px;">Top: ${esc(c.wynn.topEventName)}</span>`:''}</div>
+        ${c.topOpponent?`<div style="font-size:13px;color:#666;margin:4px 0 0 12px;"><strong>${esc(c.topOpponent.organiser)}</strong> — ${c.topOpponent.count??0} event${c.topOpponent.count!==1?'s':''}, avg heat ${(c.topOpponent.avgHeat||0).toFixed(1)}${c.topOpponent.topEventName?`<span style="font-size:12px;margin-left:6px;">· Top: ${esc(c.topOpponent.topEventName)}</span>`:''}</div>`:''}
+      </div>`;
+    }
+  } else {
+    html+=`<div style="font-size:13px;color:#999;font-style:italic;">No comparison data available.</div>`;
+  }
+  html+=`</div>`;
+
+  html+=`<div><div style="font-size:15px;font-weight:700;color:#2C3E50;margin-bottom:12px;">Strategic Recommendations</div>`;
+  const reco=ai.recommendations||'';
+  if (reco.trim()) {
+    html+=`<div style="background-color:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.18);border-radius:10px;padding:15px 17px;font-size:13px;color:#1E3A8A;line-height:1.7;white-space:pre-wrap;">${esc(reco)}</div>`;
+  } else {
+    html+=`<div style="font-size:13px;color:#999;font-style:italic;">AI recommendations not available. Run the strategy analysis in the panel first.</div>`;
+  }
+  html+=`</div>`;
+
+  document.getElementById('page-strategy').innerHTML=html;
+}
+
+// ── Download PDF ──────────────────────────────────────────────────────────────
+function downloadPDF() {
+  const element=document.getElementById('pdf-content');
+  const filename=`Macau_Report_${new Date().toISOString().slice(0,10)}.pdf`;
+  html2pdf().set({
+    margin:[10,10,10,10], filename,
+    image:{type:'jpeg',quality:0.98},
+    html2canvas:{scale:2,useCORS:true,logging:false},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+  }).from(element).save();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.onload = function() {
+  const raw = localStorage.getItem('macauReportData');
+  if (!raw) {
+    document.body.innerHTML=`<div style="padding:60px 40px;font-family:sans-serif;text-align:center;color:#555;">
+      <div style="font-size:40px;margin-bottom:16px;">📄</div>
+      <div style="font-size:20px;font-weight:700;color:#1E1E1E;margin-bottom:10px;">No report data found</div>
+      <div style="font-size:14px;color:#888;">Please open this page via the <strong>Preview Report</strong> button in the Analytics Panel.</div>
+      <button onclick="goBack()" style="margin-top:24px;padding:10px 22px;border-radius:8px;border:none;background:#2C3E50;color:white;font-size:14px;font-weight:600;cursor:pointer;">← Go Back</button>
+    </div>`; return;
+  }
+  let data;
+  try { data=JSON.parse(raw); }
+  catch(e) { document.body.innerHTML=`<div style="padding:40px;font-family:sans-serif;color:#B91C1C;">Error: ${e.message}</div>`; return; }
+  renderTopbar(data);
+  renderCover(data);
+  renderEvents(data);
+  renderAnalytics(data);
+  renderStrategy(data);
+};
+</script>
+</body>
+</html>
