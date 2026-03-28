@@ -10,6 +10,9 @@ import threading
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
+# ── 最先 load .env，確保所有 os.getenv() 都能讀到環境變量 ──────────────────
+load_dotenv()
+
 # ✏️ CHANGED: 防止重複爬蟲 thread
 # key = operator, value = True 表示而家正在爬緊
 _crawling_ops: set = set()
@@ -133,16 +136,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-load_dotenv()
-
-# 改成從環境變量讀取
+# DeepSeek client（用於帖文分析）
 client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"), 
-    base_url=os.getenv("DEEPSEEK_BASE_URL")
+    api_key="sk-ec64f5296ab34389a632b48aa8c28600",
+    base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 )
 DEEPSEEK_JSON_MODEL = "deepseek-chat"
 DEEPSEEK_REASON_MODEL = "deepseek-reasoner"
-
+# Qwen client（用於 Wynn Market Performance & Positioning 推薦）
 QWEN_RECOMMENDATION_CLIENT = OpenAI(
     api_key="sk-995dbed7e46548a6992a8e5153628165",
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
