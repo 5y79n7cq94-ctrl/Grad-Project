@@ -1,12 +1,3 @@
-"""
-用 zone_table1_monthly_share.csv 的「游客占比」，把全澳日度预测拆成：
-  路氹填海區、外港及南灣湖新填海區 的日度客流量。
-
-逻辑：
-  - CSV 的「月份」为 YYYY-MM：按该年月的占比乘到该月每一天；
-  - 「月份」仅为 01–12：按公历月份匹配（每年 3 月都用「03」那一行占比）。
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,11 +10,6 @@ NAM_VAN_ZH = "外港及南灣湖新填海區"
 
 
 def _load_share_lookup(csv_path: str | Path):
-    """
-    返回 (lookup_df, merge_how)
-    - merge_how == \"period\": lookup 含列 period, share_cotai, share_namvan
-    - merge_how == \"month\": lookup 含列 month(1-12), share_cotai, share_namvan
-    """
     long = pd.read_csv(csv_path)
     long["月份"] = long["月份"].astype(str).str.strip()
     mcol = long["月份"]
@@ -55,12 +41,6 @@ def split_forecast_by_zone_shares(
     yhat_col: str = "yhat_original",
     ds_col: str = "ds",
 ) -> pd.DataFrame:
-    """
-    在 forecast_df 上增加：
-      share_cotai, share_namvan,
-      visitation_路氹填海區, visitation_外港及南灣湖新填海區
-    （数值 = 当日全澳预测 × 对应月占比）
-    """
     lookup, how = _load_share_lookup(zone_csv)
     out = forecast_df.copy()
     out[ds_col] = pd.to_datetime(out[ds_col])
@@ -89,7 +69,7 @@ def save_district_daily_csv(
     *,
     ds_col: str = "ds",
 ) -> None:
-    """只写出日期、全澳预测、两区预测，便于 Excel。"""
+    """写出日期、全澳预测、两区预测，便于 Excel。"""
     cols = [ds_col, "share_cotai", "share_namvan", f"visitation_{COTAI_ZH}", f"visitation_{NAM_VAN_ZH}"]
     extra = [c for c in forecast_with_zones.columns if c in ("yhat_original", "yhat") and c not in cols]
     use = [c for c in [ds_col] + extra + cols[1:] if c in forecast_with_zones.columns]
