@@ -5,7 +5,10 @@ import os
 import datetime
 import threading as _threading
 from post_normalizer import auto_normalize_new_post, init_post_tables
-DB_PATH = "C:/Users/user/MediaCrawler/macau_analytics.db"
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("DB_PATH", os.path.join(_BASE_DIR, "macau_analytics.db"))
+
 
 CRAWL_EXPIRY_DAYS = 7  # operator+category 超過幾日先重新爬
 
@@ -1302,3 +1305,587 @@ def backfill_event_dates():
     conn.close()
     print(f"🔧 backfill 完成：新增 {updated} 條 | 修正即日起至 {fixed_jiri} 條 | "
           f"修正年份 {fixed_year} 條 | 修正多日期 {fixed_multi} 條 | 修正整月範圍 {fixed_wide} 條")
+
+# ── 負面監測專表──────────────
+
+def init_xhs_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS xhs_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def _xhs_negative_monitor_published_at(post: dict) -> str:
+    t = post.get("create_date_time") or post.get("time")
+    if isinstance(t, (int, float)) and t > 1e12:
+        try:
+            return datetime.datetime.utcfromtimestamp(t / 1000.0).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            pass
+    if isinstance(t, (int, float)) and t > 1e9:
+        try:
+            return datetime.datetime.utcfromtimestamp(float(t)).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            pass
+    if isinstance(t, str) and t.strip():
+        s = t.strip().replace("+08:00", "").replace("+0800", "").strip()
+        return s[:19] if len(s) >= 10 else s
+    return ""
+
+
+def _negative_monitor_ingest_pub_in_range(
+    pub_str: str,
+    from_date: str | None,
+    to_date: str | None,
+) -> bool:
+    """
+    與 query_*_negative_monitor 一致：設了 from/to 時用 published_at 前 10 字元比對；
+    有區間但帖文無可解析日期時不入庫。
+    """
+    fd = (from_date or "").strip()[:10]
+    td = (to_date or "").strip()[:10]
+    if not fd and not td:
+        return True
+    if not pub_str or len(pub_str) < 10:
+        return False
+    ds = pub_str[:10]
+    if fd and ds < fd:
+        return False
+    if td and ds > td:
+        return False
+    return True
+
+
+def ingest_xhs_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """寫入 xhs_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_xhs_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_xhs_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or str(idx)
+        post_id = f"xhs_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or post.get("name") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO xhs_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 xhs_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_xhs_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_xhs_negative_monitor_table(conn)
+    q = "SELECT * FROM xhs_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_xhs_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+def init_weibo_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weibo_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def _weibo_negative_monitor_published_at(post: dict) -> str:
+    """
+    store.weibo 寫入 create_time（Unix 秒）與 create_date_time（字串）；優先時間戳，利於入庫與日期篩選。
+    """
+
+    def _from_ts(ts: float) -> str | None:
+        if not isinstance(ts, (int, float)) or ts <= 0:
+            return None
+        try:
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return datetime.datetime.utcfromtimestamp(float(ts)).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return None
+
+    ct = post.get("create_time")
+    if isinstance(ct, (int, float)):
+        out = _from_ts(ct)
+        if out:
+            return out
+
+    t = post.get("create_date_time") or post.get("time")
+    if isinstance(t, (int, float)):
+        out = _from_ts(t)
+        if out:
+            return out
+    if isinstance(t, str) and t.strip():
+        s = t.strip().replace("+08:00", "").replace("+0800", "").strip()
+        return s[:19] if len(s) >= 10 else s
+    return ""
+
+
+def _weibo_comments_by_note_id_from_ingest_file(comments_path: str) -> dict:
+    """與 search_contents 同次運行的 search_comments_*.json，按 note_id 索引。"""
+    if not os.path.exists(comments_path):
+        return {}
+    try:
+        with open(comments_path, "r", encoding="utf-8") as f:
+            comments = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(comments, list):
+        return {}
+    by_note: dict = {}
+    for c in comments:
+        if not isinstance(c, dict):
+            continue
+        nid = c.get("note_id")
+        if nid is None:
+            continue
+        by_note.setdefault(str(nid), []).append(c)
+    return by_note
+
+
+def ingest_weibo_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_weibo_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_weibo_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    comments_path = json_file.replace("search_contents_", "search_comments_")
+    comments_by_note = _weibo_comments_by_note_id_from_ingest_file(comments_path)
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or post.get("mid") or str(idx)
+        post_id = f"weibo_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _weibo_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        range_set = bool((from_date or "").strip()[:10] or (to_date or "").strip()[:10])
+        ok_pub = _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date) if range_set else True
+        best_cpub = ""
+        if range_set and not ok_pub:
+            for c in comments_by_note.get(str(raw_id), []):
+                cpub = _weibo_negative_monitor_published_at(c)
+                if _negative_monitor_ingest_pub_in_range(cpub, from_date, to_date):
+                    if not best_cpub or cpub > best_cpub:
+                        best_cpub = cpub
+        if range_set and not ok_pub and not best_cpub:
+            continue
+
+        effective_pub = best_cpub if (range_set and not ok_pub and best_cpub) else pub_str
+
+        body = (post.get("content") or "").strip()
+        title = body[:100] + ("…" if len(body) > 100 else "")
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO weibo_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                effective_pub,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 weibo_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_weibo_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_weibo_negative_monitor_table(conn)
+    q = "SELECT * FROM weibo_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_weibo_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+# ── Instagram / Facebook 負面監測專表（Apify 關鍵詞搜索）────────────────
+
+
+def init_ig_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ig_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def init_fb_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fb_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def ingest_ig_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """僅寫入 ig_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_ig_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_ig_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or str(idx)
+        post_id = f"ig_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or post.get("name") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO ig_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 ig_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_ig_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_ig_negative_monitor_table(conn)
+    q = "SELECT * FROM ig_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_ig_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+def ingest_fb_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """寫入 fb_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_fb_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_fb_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("postId") or post.get("id") or str(idx)
+        post_id = f"fb_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO fb_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 fb_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_fb_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_fb_negative_monitor_table(conn)
+    q = "SELECT * FROM fb_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_fb_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
