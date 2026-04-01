@@ -1352,6 +1352,11 @@
       if(lbLink && window.location.search){
         lbLink.href = './heat_leaderboard_v2.html' + window.location.search;
       }
+      const nm = document.getElementById('negMonitorLink');
+      if(nm){
+        const q = window.location.search || '';
+        nm.href = '/negative-monitor' + q;
+      }
     })();
 
     const DEMO = {
