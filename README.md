@@ -32,6 +32,8 @@ cp bridge.py db_manager.py task_manager.py post_normalizer.py \
    admin_page.html login_page.html \
    macau_analytics.db \
    /path/to/MediaCrawler/
+
+cp -R footfall /path/to/MediaCrawler/
 ```
 
 ### 3. 覆蓋 MediaCrawler 修改過的檔案
