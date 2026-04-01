@@ -30,7 +30,7 @@ cp bridge.py db_manager.py task_manager.py post_normalizer.py \
    trad_simp.py classifier_tester.py \
    operation_panel.html heat_leaderboard_v2.html \
    admin_page.html login_page.html \
-   macau_analytics.db \
+   macau_analytics.db negative_monitor.html \
    /path/to/MediaCrawler/
 
 cp -R footfall /path/to/MediaCrawler/
