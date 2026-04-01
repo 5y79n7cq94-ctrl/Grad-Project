@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Negative keyword monitor</title>
+  <style>
+    :root {
+      --bg1: #F6F8FC; --bg2: #EEF2F8; --border: rgba(17,24,39,0.10);
+      --text: #0F172A; --muted: rgba(15,23,42,0.58); --brand: #2563EB;
+      --brand2: #B91C1C; --radius: 18px;
+      --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      --danger: #DC2626; --ok: #15803D;
+      --nm-field-max: 360px; 
+      --nm-ctl-h: 42px;
+      --nm-ctl-pad: 10px 12px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); color: var(--text);
+      background: linear-gradient(180deg, var(--bg1), var(--bg2)); min-height: 100vh;
+      padding: 24px 18px 48px; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    .page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    .page-head h1 { font-size: 1.35rem; font-weight: 700; margin: 0; }
+    .card {
+      background: rgba(255,255,255,0.92); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 20px 22px; margin-bottom: 16px; box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
+    label { display: block; font-size: 11px; font-weight: 650; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    input[type="text"], input[type="date"], input[type="number"] {
+      width: 100%; min-width: 0; padding: 10px 12px; border-radius: 12px;
+      border: 1px solid rgba(15,23,42,0.12); background: #F9FAFB; font-size: 14px;
+    }
+    select { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(15,23,42,0.12);
+      background: #F9FAFB; font-size: 14px; font-family: inherit; color: var(--text); }
+    .field { flex: 1 1 140px; min-width: 120px; }
+    .btn {
+      border: none; border-radius: 12px; padding: 11px 18px; font-size: 14px; font-weight: 650;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(135deg, var(--brand), #1D4ED8); color: #fff; }
+    .btn-danger { background: linear-gradient(135deg, var(--brand2), #991B1B); color: #fff; }
+    .btn-ghost { background: rgba(15,23,42,0.06); color: var(--text); text-decoration: none; display: inline-block; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+      padding: 6px 12px; border-radius: 999px; background: rgba(37,99,235,0.10); color: #1D4ED8; }
+    .pill.busy { background: rgba(220,38,38,0.12); color: var(--danger); }
+    .pill.ok { background: rgba(22,163,74,0.12); color: var(--ok); }
+    .log {
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
+      white-space: pre-wrap; max-height: 140px; overflow: auto; margin-top: 12px; padding: 10px;
+      background: rgba(15,23,42,0.04); border-radius: 10px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid rgba(15,23,42,0.08); vertical-align: top; }
+    th { color: var(--muted); font-weight: 650; font-size: 11px; text-transform: uppercase; }
+    tr:hover td { background: rgba(37,99,235,0.04); }
+    .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(185,28,28,0.12);
+      color: #991B1B; margin-right: 4px; display: inline-block; margin-top: 2px; }
+    .tag-soft { background: rgba(15,23,42,0.08); color: var(--muted); }
+    a.link { color: var(--brand); text-decoration: none; font-weight: 600; }
+    .nm-stack-gap { margin-bottom: 12px; }
+    .nm-stack-gap:last-child { margin-bottom: 0; }
+    .nm-same-w {
+      width: 100%;
+      max-width: min(var(--nm-field-max), 100%);
+    }
+    .nm-kw-block label { margin-bottom: 5px; }
+    select#nmPlatform,
+    .nm-dates-row input[type="date"] {
+      width: 100%;
+      min-height: var(--nm-ctl-h);
+      padding: var(--nm-ctl-pad);
+      box-sizing: border-box;
+    }
+    .nm-dates-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, var(--nm-field-max)));
+      gap: 12px 16px;
+      width: 100%;
+      max-width: min(calc(2 * var(--nm-field-max) + 16px), 100%);
+      align-items: end;
+    }
+    @media (max-width: 820px) {
+      .nm-dates-row {
+        grid-template-columns: 1fr;
+        max-width: min(var(--nm-field-max), 100%);
+      }
+    }
+    #kwBox {
+      display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+      min-height: var(--nm-ctl-h); padding: 5px 10px; box-sizing: border-box;
+      border-radius: 12px; border: 1px solid rgba(15,23,42,0.12); background: #F9FAFB; cursor: text;
+    }
+    #kwBox input[type="text"] {
+      border: none; outline: none; background: transparent; flex: 1; min-width: 72px;
+      font-size: 13px; padding: 4px 2px; line-height: 1.25;
+    }
+    .kw-tag {
+      display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+      background: rgba(37,99,235,0.10); color: #1D4ED8; border: 1px solid rgba(37,99,235,0.22);
+      font-size: 11px; font-weight: 600; cursor: pointer; user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="page-head">
+      <h1>Negative keyword monitor</h1>
+      <a class="btn btn-ghost" id="nmBackToPanel" href="/operation-panel">Operation panel</a>
+    </div>
+
+    <div class="card">
+      <div class="nm-same-w nm-stack-gap">
+        <label>Platform</label>
+        <select id="nmPlatform" title="Data source for crawl and analysis">
+          <option value="xhs" selected>Xiaohongshu (XHS)</option>
+          <option value="weibo">Weibo</option>
+          <option value="ig">Instagram (Apify)</option>
+          <option value="fb">Facebook (Apify)</option>
+        </select>
+      </div>
+      <div class="nm-same-w nm-stack-gap nm-kw-block">
+        <label id="nmKwLabel">Keywords for <strong id="nmKwPlatName">Xiaohongshu (XHS)</strong></label>
+        <div id="kwBox" onclick="document.getElementById('kwInput').focus()">
+          <span id="kwTags"></span>
+          <input type="text" id="kwInput" placeholder="Keyword, Enter to add" autocomplete="off" />
+        </div>
+      </div>
+      <div class="nm-dates-row nm-stack-gap">
+        <div style="min-width:0">
+          <label>From date</label>
+          <input type="date" id="fromDate" title="分析篩選；Run crawl 時若填寫則只入庫該區間內發布的帖" />
+        </div>
+        <div style="min-width:0">
+          <label>To date</label>
+          <input type="date" id="toDate" title="分析篩選；Run crawl 時若填寫則只入庫該區間內發布的帖" />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary" id="btnCrawl">Run crawl</button>
+      </div>
+      <div class="row" style="margin-top:12px;align-items:center">
+        <span class="pill ok" id="statusPill">Status: idle</span>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0 0 12px;font-size:1rem">Results</h2>
+      <div class="btn-row" style="margin-top:0;margin-bottom:10px">
+        <button type="button" class="btn btn-danger" id="btnPhase1">Step 1 — Lexicon hits + AI</button>
+        <button type="button" class="btn btn-primary" id="btnPhase2">Step 2 — Full AI (no lexicon hit)</button>
+      </div>
+      <div class="row" style="margin-bottom:10px;align-items:center">
+        <span id="phase2Hint" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div style="overflow-x:auto">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>Time</th><th>Title / snippet</th><th>Lexicon</th><th>AI</th><th>Link</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function apiRoot() {
+      if (location.protocol !== "file:") return location.origin.replace(/\/$/, "");
+      var p = new URLSearchParams(location.search).get("_port") || "9038";
+      return "http://127.0.0.1:" + p;
+    }
+
+    function sessionQueryString() {
+      var s = window.location.search || "";
+      return s.replace(/^\?/, "");
+    }
+
+    (function () {
+      var el = document.getElementById("nmBackToPanel");
+      if (!el) return;
+      var base = apiRoot() + "/operation-panel";
+      var q = sessionQueryString();
+      el.href = q ? base + "?" + q : base;
+    })();
+
+    var _nmKeywordsByPlatform = { xhs: [], weibo: [], ig: [], fb: [] };
+    var _nmPhase2NextOffset = 0;
+
+    var _NM_PLAT_LABELS = {
+      xhs: "Xiaohongshu (XHS)",
+      weibo: "Weibo",
+      ig: "Instagram",
+      fb: "Facebook",
+    };
+
+    function nmKwList() {
+      var p = document.getElementById("nmPlatform").value || "xhs";
+      if (!_nmKeywordsByPlatform[p]) _nmKeywordsByPlatform[p] = [];
+      return _nmKeywordsByPlatform[p];
+    }
+
+    function nmSyncKwPlatLabel() {
+      var v = document.getElementById("nmPlatform").value || "xhs";
+      var el = document.getElementById("nmKwPlatName");
+      if (el) el.textContent = _NM_PLAT_LABELS[v] || v;
+    }
+
+    document.getElementById("nmPlatform").addEventListener("change", function () {
+      _nmPhase2NextOffset = 0;
+      var hint = document.getElementById("phase2Hint");
+      if (hint) hint.textContent = "";
+      nmSyncKwPlatLabel();
+      renderKwTags();
+      logLine(
+        "已切換平台，關鍵詞列表已換為「" +
+          (_NM_PLAT_LABELS[this.value] || this.value) +
+          "」專用；Step 2 offset 已重置。"
+      );
+    });
+
+    nmSyncKwPlatLabel();
+
+    function logLine(msg) {
+      var el = document.getElementById("log");
+      var t = new Date().toLocaleTimeString();
+      el.textContent = "[" + t + "] " + msg + "\n" + el.textContent.slice(0, 4000);
+    }
+
+    function renderKwTags() {
+      var box = document.getElementById("kwTags");
+      var arr = nmKwList();
+      box.innerHTML = "";
+      arr.forEach(function (k) {
+        var s = document.createElement("span");
+        s.className = "kw-tag";
+        s.textContent = k + " ×";
+        s.title = "Remove";
+        s.onclick = function (e) {
+          e.stopPropagation();
+          var a = nmKwList();
+          var j = a.indexOf(k);
+          if (j >= 0) a.splice(j, 1);
+          renderKwTags();
+        };
+        box.appendChild(s);
+      });
+    }
+
+    document.getElementById("kwInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        var v = this.value.trim();
+        var arr = nmKwList();
+        if (v && arr.indexOf(v) < 0) arr.push(v);
+        this.value = "";
+        renderKwTags();
+      }
+    });
+
+    renderKwTags();
+
+    function esc(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function aiSortKey(ai) {
+      if (!ai || ai.negative !== true) return 0;
+      return 10 - (parseInt(ai.severity, 10) || 0);
+    }
+
+    function rowHtml(it) {
+      var ai = it.ai;
+      var aiCell;
+      if (!ai) aiCell = '<span class="tag-soft">—</span>';
+      else if (ai.negative === true) {
+        var sev = ai.severity != null ? " (sev " + esc(ai.severity) + ")" : "";
+        aiCell =
+          '<span class="tag">Negative' +
+          sev +
+          '</span><div style="margin-top:4px;font-size:11px;color:var(--muted)">' +
+          esc(ai.reason || "") +
+          "</div>";
+      } else {
+        var sev2 = ai.severity != null ? " (sev " + esc(ai.severity) + ")" : "";
+        aiCell = '<span class="tag tag-soft">Not negative' + sev2 + "</span>";
+      }
+      var lex = (it.lexicon_hits || []).map(function (w) {
+        return '<span class="tag">' + esc(w) + "</span>";
+      }).join(" ");
+      if (!lex) lex = '<span class="tag-soft">—</span>';
+      var url = it.post_url || "";
+      var link = url
+        ? '<a class="link" href="' + esc(url) + '" target="_blank" rel="noopener">Open</a>'
+        : "—";
+      return (
+        "<tr>" +
+        "<td>" + esc((it.published_at || "").slice(0, 16)) + "</td>" +
+        "<td>" + esc((it.title || it.content_preview || "").slice(0, 200)) + "</td>" +
+        "<td>" + lex + "</td>" +
+        "<td>" + aiCell + "</td>" +
+        "<td>" + link + "</td>" +
+        "</tr>"
+      );
+    }
+
+    function renderTable(items) {
+      var tb = document.getElementById("tbody");
+      tb.innerHTML = "";
+      var sorted = (items || []).slice().sort(function (a, b) {
+        return aiSortKey(b.ai) - aiSortKey(a.ai);
+      });
+      sorted.forEach(function (it) {
+        tb.insertAdjacentHTML("beforeend", rowHtml(it));
+      });
+    }
+
+    function appendSessionToUrl(url) {
+      var q = sessionQueryString();
+      if (!q) return url;
+      return url + (url.indexOf("?") >= 0 ? "&" : "?") + q;
+    }
+
+    var _nmStatusTimer = null;
+    var NM_STATUS_POLL_MS = 15000;
+    var NM_BOOT_KEY = "nm_bridge_boot_ts";
+
+    function nmResetAfterBridgeRestart(msg) {
+      _nmPhase2NextOffset = 0;
+      var hint = document.getElementById("phase2Hint");
+      var tb = document.getElementById("tbody");
+      if (hint) hint.textContent = "";
+      if (tb) tb.innerHTML = "";
+      if (msg) logLine(msg);
+    }
+
+    async function pollStatus() {
+      if (document.visibilityState === "hidden") return;
+      var root = apiRoot();
+      try {
+        var r = await fetch(appendSessionToUrl(root + "/api/v2/negative-monitor/status"));
+        var j = await r.json();
+        if (typeof j.bridge_boot_ts === "number") {
+          var prev = sessionStorage.getItem(NM_BOOT_KEY);
+          var cur = String(j.bridge_boot_ts);
+          if (prev !== null && prev !== cur) {
+            nmResetAfterBridgeRestart(
+              "Server was restarted — previous analysis view and Step 2 progress were cleared (no automatic resume)."
+            );
+          }
+          sessionStorage.setItem(NM_BOOT_KEY, cur);
+        }
+        var pill = document.getElementById("statusPill");
+        if (j.crawl_running) {
+          pill.className = "pill busy";
+          pill.textContent = "Status: crawl running…";
+        } else {
+          pill.className = "pill ok";
+          pill.textContent = "Status: idle";
+        }
+      } catch (e) {}
+    }
+
+    function _nmStartStatusPolling() {
+      if (_nmStatusTimer) clearInterval(_nmStatusTimer);
+      _nmStatusTimer = null;
+      if (document.visibilityState === "hidden") return;
+      _nmStatusTimer = setInterval(pollStatus, NM_STATUS_POLL_MS);
+    }
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") {
+        if (_nmStatusTimer) {
+          clearInterval(_nmStatusTimer);
+          _nmStatusTimer = null;
+        }
+      } else {
+        pollStatus();
+        _nmStartStatusPolling();
+      }
+    });
+
+    pollStatus();
+    _nmStartStatusPolling();
+
+    document.getElementById("btnCrawl").onclick = async function () {
+      var root = apiRoot();
+      var kArr = nmKwList();
+      var kw = kArr.length ? kArr.join(",") : "";
+      var fd = document.getElementById("fromDate").value;
+      var td = document.getElementById("toDate").value;
+      var qs = new URLSearchParams({
+        max_comments: "40",
+        headless: "0",
+        source: document.getElementById("nmPlatform").value,
+      });
+      if (kw) qs.set("keywords", kw);
+      if (fd) qs.set("from_date", fd);
+      if (td) qs.set("to_date", td);
+      logLine("POST crawl …");
+      try {
+        var url = root + "/api/v2/negative-monitor/crawl?" + qs.toString();
+        var r = await fetch(appendSessionToUrl(url), { method: "POST" });
+        var j = await r.json();
+        logLine(JSON.stringify(j));
+      } catch (e) {
+        logLine("Crawl failed: " + e);
+      }
+      pollStatus();
+    };
+
+    document.getElementById("btnPhase1").onclick = async function () {
+      _nmPhase2NextOffset = 0;
+      document.getElementById("phase2Hint").textContent = "";
+      var root = apiRoot();
+      var fd = document.getElementById("fromDate").value;
+      var td = document.getElementById("toDate").value;
+      var qs = new URLSearchParams({
+        phase: "1",
+        source: document.getElementById("nmPlatform").value,
+      });
+      if (fd) qs.set("from_date", fd);
+      if (td) qs.set("to_date", td);
+      logLine("GET analyze phase=1 …");
+      try {
+        var url = root + "/api/v2/negative-monitor/analyze?" + qs.toString();
+        var r = await fetch(appendSessionToUrl(url));
+        var j = await r.json();
+        renderTable(j.items || []);
+        logLine("Step 1 OK");
+      } catch (e) {
+        logLine("Step 1 failed: " + e);
+      }
+    };
+
+    document.getElementById("btnPhase2").onclick = async function () {
+      var root = apiRoot();
+      var fd = document.getElementById("fromDate").value;
+      var td = document.getElementById("toDate").value;
+      var qs = new URLSearchParams({
+        phase: "2",
+        phase2_offset: String(_nmPhase2NextOffset),
+        source: document.getElementById("nmPlatform").value,
+      });
+      if (fd) qs.set("from_date", fd);
+      if (td) qs.set("to_date", td);
+      logLine("GET analyze phase=2 offset=" + _nmPhase2NextOffset + " …");
+      try {
+        var url = root + "/api/v2/negative-monitor/analyze?" + qs.toString();
+        var r = await fetch(appendSessionToUrl(url));
+        var j = await r.json();
+        _nmPhase2NextOffset = j.phase2_next_offset != null ? j.phase2_next_offset : 0;
+        document.getElementById("phase2Hint").textContent =
+          "Step 2 next_offset=" +
+          _nmPhase2NextOffset +
+          (j.phase2_exhausted ? " (end of list)" : " (click Step 2 again for next batch)");
+        renderTable(j.items_batch || []);
+        logLine("Step 2 OK");
+      } catch (e) {
+        logLine("Step 2 failed: " + e);
+      }
+    };
+  </script>
+</body>
+</html>
