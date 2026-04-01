@@ -1,9 +1,3 @@
-"""
-单日：全澳 Prophet 预测（外生变量见 feature_config）→ 10**yhat → 按月份占比拆两区。
-
-用法见文末 CLI；也可在代码中 import predict_one_day。
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -24,7 +18,6 @@ def _default_zone_csv() -> Path:
 
 
 def weekday_regressor_flags(ds: str | pd.Timestamp) -> dict[str, int]:
-    """由 ds 得到 IS_SATURDAY / IS_SUNDAY（周一=0 … 周日=6）。无 IS_FRIDAY。"""
     d = pd.to_datetime(ds)
     wd = int(d.weekday())
     return {
@@ -38,9 +31,6 @@ def merge_regressors_for_prediction(
     partial_ai_five: dict[str, int] | None,
     continuous: dict[str, float],
 ) -> dict[str, float | int]:
-    """
-    AI 填 5 个 0/1；系统填周六日；EXCHANGE_RATE / PRICE_INDEX 由历史表 lookup。
-    """
     partial_ai_five = partial_ai_five or {}
     out: dict[str, float | int] = {}
     for k in AI_BINARY_KEYS:
@@ -48,7 +38,6 @@ def merge_regressors_for_prediction(
     out.update(weekday_regressor_flags(ds))
     for k in CONTINUOUS_COLUMNS:
         out[k] = float(continuous[k])
-    # 与 REGRESSOR_COLUMNS 对齐
     ordered: dict[str, float | int] = {c: out[c] for c in REGRESSOR_COLUMNS}
     return ordered
 
@@ -59,7 +48,7 @@ def build_future_row(
     *,
     order: list[str] | None = None,
 ) -> pd.DataFrame:
-    """构造 Prophet predict 所需的一行：ds + 与训练时同序的回归列。"""
+    """构造 Prophet predict 所需的一行"""
     cols = order or REGRESSOR_COLUMNS
     reg = regressors or {}
     row: dict[str, Any] = {"ds": pd.to_datetime(ds)}
@@ -117,7 +106,7 @@ def predict_one_day(
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="单日全澳 Prophet 预测（或手填全澳）并按 zone CSV 拆两区"
+        description="单日全澳 Prophet 预测并按 zone CSV 拆两区"
     )
     p.add_argument("--ds", required=True, help="日期，如 2026-03-15")
     p.add_argument("--model", "-m", type=Path, default=None)
