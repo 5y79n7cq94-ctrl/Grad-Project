@@ -566,7 +566,7 @@ def run_weibo_negative_monitor_crawl(
     if cf or ct:
         dr = f" | 發布日期: {cf or '…'} ~ {ct or '…'}"
     print(f"\n{'='*50}\n🔍 [微博 負面監測] 關鍵字搜索{dr}\n  {kws[:120]}...")
-    print(f"🐍 子進程 Python: {py_exe}")
+    print(f"子進程 Python: {py_exe}")
     try:
         subprocess.run(cmd, check=False, cwd=base_path, env=env)
     except Exception as e:
@@ -637,7 +637,6 @@ def _ig_apify_item_looks_like_post(r: dict) -> bool:
     u = (r.get("url") or "").lower()
     if "instagram.com/p/" in u or "instagram.com/reel/" in u:
         return True
-    # hashtag 元數據里「posts」陣列常為精簡物件：僅 id/pk + 圖片或 caption
     pid = r.get("pk") or r.get("media_id") or r.get("id")
     if pid is not None and str(pid).strip():
         if (
@@ -1118,10 +1117,10 @@ def run_fb_negative_monitor_crawl(
     crawl_to_date: str | None = None,
 ) -> dict:
     """
-    Facebook 負面監測（兩段式）：
+    Facebook 負面監測，两段式搜索：
     1) Apify facebook-posts-search：關鍵詞搜公開帖；
-    2) Apify facebook-comments-scraper：對搜到的帖 URL 批量抓留言（可關 NEGATIVE_MONITOR_FETCH_FB_COMMENTS）。
-    寫入 data/fb/json 並入庫 fb_negative_monitor。需 APIFY_TOKEN。
+    2) Apify facebook-comments-scraper：對搜到的帖 URL 批量抓留言）。
+    寫入 data/fb/json 並入庫 fb_negative_monitor。
     """
     if not (os.getenv("APIFY_TOKEN") or "").strip():
         return {"ok": False, "error": "APIFY_TOKEN 未設置，無法調用 Apify", "ingested": 0}
