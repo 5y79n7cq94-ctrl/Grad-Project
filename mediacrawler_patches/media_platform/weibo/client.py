@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 from .exception import DataFetchError
 from .field import SearchType
 
+_WEIBO_OK_ZERO_EMPTY_RESULT_MSGS = frozenset(
+    {
+        "这里还没有内容",
+    }
+)
 
 class WeiboClient(ProxyRefreshMixin):
 
@@ -90,7 +95,14 @@ class WeiboClient(ProxyRefreshMixin):
             raise DataFetchError(f"get response code error: {response.status_code}")
 
         ok_code = data.get("ok")
-        if ok_code == 0:  # response error
+        if ok_code == 0:  # response error or empty pagination
+            msg = (data.get("msg") or "").strip()
+            inner = data.get("data")
+            if isinstance(inner, dict) and msg in _WEIBO_OK_ZERO_EMPTY_RESULT_MSGS:
+                utils.logger.info(
+                    f"[WeiboClient.request] Treat ok=0 as empty data (no retry): {msg!r} url={method}:{url}"
+                )
+                return inner
             utils.logger.error(f"[WeiboClient.request] request {method}:{url} err, res:{data}")
             raise DataFetchError(data.get("msg", "response error"))
         elif ok_code != 1:  # unknown error
