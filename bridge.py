@@ -1,14 +1,17 @@
-import os, sys, json, uvicorn, re, hashlib, sqlite3
+import os, sys, json, uvicorn, re, hashlib, sqlite3, glob, time, math
 import pandas as pd
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 from collections import defaultdict
-from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH
-from task_manager import run_task_master
+from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH, query_fb_negative_monitor, query_ig_negative_monitor, query_weibo_negative_monitor, query_xhs_negative_monitor,
+from task_manager import run_task_master, run_fb_negative_monitor_crawl, run_ig_negative_monitor_crawl, run_weibo_negative_monitor_crawl, run_xhs_negative_monitor_crawl,
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+from pathlib import Path
+from fastapi.responses import FileResponse, Response
+import joblib  
 
 # ── 最先 load .env，確保所有 os.getenv() 都能讀到環境變量 ──────────────────
 load_dotenv()
@@ -17,6 +20,17 @@ load_dotenv()
 # key = operator, value = True 表示而家正在爬緊
 _crawling_ops: set = set()
 _crawling_lock = threading.Lock()
+
+_neg_monitor_crawl_lock = threading.Lock()
+_neg_monitor_crawl_running = False
+BRIDGE_ROOT = Path(__file__).resolve().parent
+
+def _bridge_html_file(filename: str) -> FileResponse:
+    p = BRIDGE_ROOT / filename
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail=f"{filename} not found under {BRIDGE_ROOT}")
+    return FileResponse(p, media_type="text/html; charset=utf-8")
+
 
 # ── DeepSeek analysis cache（per operator per date range）─────────────────────
 # 避免同一 operator + 日期範圍重複 call DeepSeek；重啟 bridge.py 先清除 cache
@@ -207,6 +221,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/")
+@app.get("/operation-panel")
+@app.get("/operation-panel/")
+async def operation_panel_page():
+    p = BRIDGE_ROOT / "operation_panel.html"
+    if not p.is_file():
+        return {"error": "operation_panel.html missing", "path": str(p)}
+    return FileResponse(p, media_type="text/html; charset=utf-8")
+
+@app.get("/negative-monitor")
+async def negative_monitor_page():
+    p = BRIDGE_ROOT / "negative_monitor.html"
+    if not p.is_file():
+        return {"error": "negative_monitor.html missing", "path": str(p)}
+    return FileResponse(p, media_type="text/html; charset=utf-8")
+
+@app.get("/login_page.html")
+async def bridge_login_page_html():
+    return _bridge_html_file("login_page.html")
+
+@app.get("/admin_page.html")
+async def bridge_admin_page_html():
+    return _bridge_html_file("admin_page.html")
+
+@app.get("/heat_leaderboard_v2.html")
+async def bridge_heat_leaderboard_html():
+    return _bridge_html_file("heat_leaderboard_v2.html")
+
+@app.get("/archived.html")
+async def bridge_archived_html():
+    return _bridge_html_file("archived.html")
+
+@app.get("/download_report.html")
+async def bridge_download_report_html():
+    return _bridge_html_file("download_report.html")
+
+@app.get("/operation_panel.html")
+async def bridge_operation_panel_dot_html():
+    return _bridge_html_file("operation_panel.html")
+
+@app.get("/favicon.ico")
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+async def browser_icon_placeholders():
+    return Response(status_code=204)
+
+
 # DeepSeek client（用於帖文分析）
 client = OpenAI(
     api_key="sk-ec64f5296ab34389a632b48aa8c28600",
@@ -220,6 +281,13 @@ QWEN_RECOMMENDATION_CLIENT = OpenAI(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 QWEN_RECOMMENDATION_MODEL = "qwen3.5-plus"
+
+NEGATIVE_MONITOR_LEXICON = [
+    "避雷", "踩雷", "翻車", "差評", "差评", "吐槽", "投訴", "维权", "維權", "騙局", "骗局",
+    "被坑", "別去", "别去", "不要住", "服務差", "服务差", "態度差", "态度差", "衛生", "卫生",
+    "髒", "脏", "吵", "騷擾", "骚扰", "退費", "退费", "退款", "報警", "报警", "凶殺", "凶杀",
+    "命案", "事故", "受傷", "受伤", "食物中毒", "發霉", "发霉", "筹码", "公关", "抽成", "偷"
+]
 
 # ── 繁簡轉換（共用 trad_simp 模組） ──────────────────────────────────────────
 try:
@@ -626,6 +694,532 @@ def _query_events_deduped(keyword: str, operators: list, categories: list,
         try: conn.close()
         except: pass
         return pd.DataFrame()
+
+# ── Footfall──────────────
+
+FOOTFALL_MACAU_VENUE_REFERENCE_ZH = """
+你必须把每个活动判到下列两类统计分区之一（JSON 里 region 只能填 cotai 或 nam_van）：
+
+**路氹填海区 (cotai)** — 统计分区名称：路氹填海區。主要酒店/场所（与运营商对应关系供参考）：
+- Wynn（永利）：永利皇宫
+- Sands（金沙）：澳门威尼斯人、澳门伦敦人、澳门巴黎人、澳门瑞吉酒店、澳门喜来登酒店、澳门康莱德酒店、澳门四季酒店（含四季名荟）、伦敦人御园、伦敦人御匾名汇、巴黎人御匾峰、伦敦人名汇
+- MGM（美高梅）：美狮美高梅（含雍华府）
+- Galaxy（银河）：丽思卡尔顿、悦榕庄、JW万豪、银河酒店、大仓酒店、百老汇、安达仕酒店、莱佛士、嘉佩乐
+- Melco（新濠）：新濠影汇（含映星汇）、君悦、摩珀斯、颐居、迎尚、W酒店
+- SJM（澳博）：澳门上葡京、范思哲酒店、卡尔拉格斐酒店
+
+**外港及南湾湖新填海区 (nam_van)** — 统计分区名称：外港及南灣湖新填海區。主要酒店/场所：
+- SJM（澳博）：澳门新葡京、澳门葡京（老葡京）、回力酒店
+- MGM（美高梅）：澳门美高梅
+- Melco（新濠）：澳门新濠锋
+- Wynn（永利）：永利澳门
+- 注意：**励宫酒店**、**澳门文华东方（文化东方）不属于澳博/SJM**；若活动在这些场所举办，region 仍填 nam_van，primary_venue 填真实酒店名，**不要**把场所写成或归到 SJM/澳博名下。
+"""
+
+
+def _footfall_parse_json_object(text: str) -> dict:
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+    text = text.strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    if not m:
+        raise ValueError("no JSON object in model output")
+    return json.loads(m.group())
+
+
+def _footfall_events_summary_for_date(ds: str) -> str:
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+        rows = conn.execute(
+            """
+            SELECT COALESCE(ai_name, ''), COALESCE(category, ''), COALESCE(sub_type, ''), COALESCE(event_date, '')
+            FROM events_deduped
+            WHERE event_date IS NOT NULL AND length(event_date) >= 10 AND substr(event_date, 1, 10) = ?
+            LIMIT 40
+            """,
+            (ds[:10],),
+        ).fetchall()
+        conn.close()
+        if not rows:
+            return ""
+        lines = []
+        for r in rows:
+            name, cat, sub, ed = r
+            lines.append(f"- {(name or '')[:120]} | {cat} / {sub} | date={ed}")
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"⚠️ footfall events summary: {e}")
+        return ""
+
+
+def _footfall_ai_continuous_regressors(ds: str, aux_df: pd.DataFrame, events_summary: str) -> dict | None:
+    """
+    由 DeepSeek 估计目标日 EXCHANGE_RATE、PRICE_INDEX（与训练表量纲一致）。
+    失败返回 None，由调用方回退到 finaldata1 查表。
+    """
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return None
+    d = datetime.strptime(ds[:10], "%Y-%m-%d")
+    weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][d.weekday()]
+    try:
+        h = aux_df.copy()
+        h["Date"] = pd.to_datetime(h["Date"])
+        h = h.sort_values("Date")
+        tail = h.tail(60)
+        er_s = pd.to_numeric(tail.get("EXCHANGE_RATE"), errors="coerce").dropna()
+        pi_s = pd.to_numeric(tail.get("PRICE_INDEX"), errors="coerce").dropna()
+        er_last = float(er_s.iloc[-1]) if len(er_s) else None
+        pi_last = float(pi_s.iloc[-1]) if len(pi_s) else None
+        er_rng = f"{float(er_s.min()):.4f}–{float(er_s.max()):.4f}" if len(er_s) else "—"
+        pi_rng = f"{float(pi_s.min()):.2f}–{float(pi_s.max()):.2f}" if len(pi_s) else "—"
+    except Exception:
+        er_last = pi_last = None
+        er_rng = pi_rng = "—"
+
+    prompt = f"""你是澳门旅游宏观经济辅助变量估计员。目标日期：{ds}（{weekday_cn}）。
+
+## 量纲（须与训练表 finaldata1 一致）
+训练列 **EXCHANGE_RATE**：人民币/港元等相关汇率口径的数值；历史末值约 {er_last if er_last is not None else '—'} ，近60日范围 {er_rng}。
+训练列 **PRICE_INDEX**：物价指数；历史末值约 {pi_last if pi_last is not None else '—'} ，近60日范围 {pi_rng}。
+
+请结合公历与节假日、常识与下方活动摘要，**估计该日用于 Prophet 的 EXCHANGE_RATE 与 PRICE_INDEX（各一个浮点数）**。须与上列**同一数量级**，勿编造离谱数量级。
+
+活动摘要（events_deduped，可能为空）：
+{events_summary or "（无）"}
+
+只输出一个 JSON 对象，键必须是：EXCHANGE_RATE, PRICE_INDEX。不要任何其他文字。"""
+    try:
+        resp = client.chat.completions.create(
+            model=DEEPSEEK_JSON_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.25,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        data = _footfall_parse_json_object(raw)
+        er = float(data.get("EXCHANGE_RATE"))
+        pi = float(data.get("PRICE_INDEX"))
+        if not (math.isfinite(er) and math.isfinite(pi)):
+            return None
+        return {"EXCHANGE_RATE": er, "PRICE_INDEX": pi}
+    except Exception as e:
+        print(f"⚠️ footfall AI continuous (EXCHANGE/PRICE) failed: {e}")
+        return None
+
+
+def _footfall_ai_five_regressors(ds: str, events_summary: str, cont: dict) -> dict:
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return {}
+    d = datetime.strptime(ds[:10], "%Y-%m-%d")
+    weekday_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][d.weekday()]
+    er = cont.get("EXCHANGE_RATE", "")
+    pi = cont.get("PRICE_INDEX", "")
+    prompt = f"""你是澳门旅游客流 Prophet 模型的特征标注员。目标日期：{ds}（{weekday_cn}）。
+
+## 当日宏观连续变量（已由上游估计，与 Prophet 使用值一致；供你综合判断，勿在 JSON 里输出这两项）
+- EXCHANGE_RATE（训练列名 EXCHANGE_RATE）: {er}
+- PRICE_INDEX（训练列名 PRICE_INDEX）: {pi}
+
+## 5 个二值特征（仅能取 0 或 1）
+请结合：公历与节假日常识、下方「活动摘要」、以及上面对汇率与物价的背景，判断下列开关；不确定则 0。
+
+- IS_PH_CN：当日是否为中国内地法定节假日（公众休假日）。
+- IS_PH_HK：当日是否为香港法定节假日。
+- HAS_Concerts：当日澳门是否有大型演唱会或主要音乐演出（可参考活动摘要）。
+- HAS_Macau_Big_Events：当日是否有大型节庆、赛事、会展等对客流有明显抬升的活动（非日常小型活动）。
+- IS_TYPHOON8910：是否属于台风高发期（8–10 月）且当日有台风或极端天气对澳门有合理影响；否则 0。
+
+活动摘要（来自本系统 events_deduped，可能为空）：
+{events_summary or "（无）"}
+
+只输出一个 JSON 对象，键必须是：IS_PH_CN, IS_PH_HK, HAS_Concerts, HAS_Macau_Big_Events, IS_TYPHOON8910，值只能是 0 或 1。不要任何其他文字。"""
+    try:
+        resp = client.chat.completions.create(
+            model=DEEPSEEK_JSON_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        data = _footfall_parse_json_object(raw)
+        keys = ["IS_PH_CN", "IS_PH_HK", "HAS_Concerts", "HAS_Macau_Big_Events", "IS_TYPHOON8910"]
+        out = {}
+        for k in keys:
+            v = data.get(k, 0)
+            try:
+                out[k] = 1 if int(v) == 1 else 0
+            except (TypeError, ValueError):
+                out[k] = 0
+        return out
+    except Exception as e:
+        print(f"⚠️ footfall AI regressors failed: {e}")
+        return {}
+
+
+_FOOTFALL_FITTED_CACHE: dict = {}
+
+
+def _get_footfall_fitted(model_path: Path):
+    import joblib
+
+    k = str(model_path.resolve())
+    if k not in _FOOTFALL_FITTED_CACHE:
+        _FOOTFALL_FITTED_CACHE[k] = joblib.load(model_path)
+    return _FOOTFALL_FITTED_CACHE[k]
+
+
+def _footfall_predict_row_for_date(
+    ds: str,
+    *,
+    model_path: Path,
+    zone_csv: Path,
+    footfall_dir: Path,
+    fast: bool = False,
+    continuous_override: dict | None = None,
+    no_per_day_continuous_ai: bool = False,
+) -> dict:
+    """
+    fast=True：仅用 finaldata1 连续变量 + 周末日历（不调 DeepSeek）。
+    continuous_override：若给定，该日强制使用该组 EXCHANGE_RATE/PRICE_INDEX（少用）。
+    no_per_day_continuous_ai：为 True 时不调用「单日」汇率/物价 AI（仅用 CSV 连续变量）。
+    非 fast：按自然日 ds 各估一组 EXCHANGE/PRICE；**同一日历日的所有活动**共用当日 zone 预测（见 footfall-event-allocate 按 ds 只算一次）。
+    """
+    if str(footfall_dir) not in sys.path:
+        sys.path.insert(0, str(footfall_dir))
+
+    from load_finaldata import continuous_values_for_date, load_finaldata_df
+    from predict_one_day import build_future_row, merge_regressors_for_prediction, predict_total_australia
+    from zone_daily_from_total import COTAI_ZH, NAM_VAN_ZH, split_forecast_by_zone_shares
+
+    aux_df = load_finaldata_df(footfall_dir / "finaldata1.csv")
+    if continuous_override is not None:
+        cont = {
+            "EXCHANGE_RATE": float(continuous_override["EXCHANGE_RATE"]),
+            "PRICE_INDEX": float(continuous_override["PRICE_INDEX"]),
+        }
+    else:
+        cont = continuous_values_for_date(aux_df, ds)
+    five: dict = {}
+    if not fast and os.getenv("DEEPSEEK_API_KEY"):
+        evs = _footfall_events_summary_for_date(ds)
+        if continuous_override is None and not no_per_day_continuous_ai:
+            ai_cont = _footfall_ai_continuous_regressors(ds, aux_df, evs)
+            if ai_cont is not None:
+                cont = ai_cont
+        five = _footfall_ai_five_regressors(ds, evs, cont)
+    regressors = merge_regressors_for_prediction(ds, five, cont)
+    fitted = _get_footfall_fitted(model_path)
+    row_df = build_future_row(ds, regressors)
+    yhat_o = predict_total_australia(fitted, row_df, inverse_log10=True)
+    one = pd.DataFrame({"ds": [pd.to_datetime(ds)], "yhat_original": [yhat_o]})
+    df = split_forecast_by_zone_shares(one, zone_csv=zone_csv, yhat_col="yhat_original", ds_col="ds")
+    row = df.iloc[0]
+    col_c = f"visitation_{COTAI_ZH}"
+    col_n = f"visitation_{NAM_VAN_ZH}"
+    return {
+        "ds": ds,
+        "macau_total": float(row["yhat_original"]),
+        "zone_cotai": float(row[col_c]),
+        "zone_namvan": float(row[col_n]),
+        "labels": {"cotai": COTAI_ZH, "namvan": NAM_VAN_ZH},
+    }
+
+
+def _footfall_enumerate_dates(d0: str, d1: str) -> list[str]:
+    a = datetime.strptime(d0[:10], "%Y-%m-%d").date()
+    b = datetime.strptime(d1[:10], "%Y-%m-%d").date()
+    if b < a:
+        a, b = b, a
+    out = []
+    cur = a
+    while cur <= b:
+        out.append(cur.isoformat())
+        cur += timedelta(days=1)
+    return out
+
+
+def _footfall_fallback_assignment(idx: int, ev: dict, allowed_dates: list[str]) -> dict:
+    """无 DeepSeek 或解析失败时的粗规则：按运营商/文案关键字猜区域与日期。"""
+    text = f"{ev.get('name','')} {ev.get('description','')} {ev.get('location','')}".lower()
+    op = (ev.get("operator") or "").lower()
+    nam_kw = ["新葡京", "老葡京", "葡京", "文华东方", "文化东方", "美高梅", "新濠锋", "永利澳门", "励宫", "回力", "外港", "南灣", "南湾"]
+    cot_kw = ["威尼斯人", "伦敦人", "巴黎人", "美狮", "银河", "影汇", "路氹", "路环", "永利皇", "皇宫", "上葡京", "范思哲", "卡尔拉格斐"]
+    region = "nam_van"
+    if any(k in text for k in cot_kw) or op in ("sands", "galaxy", "melco") or (
+        op == "wynn" and ("皇宫" in text or "皇宮" in text or "路氹" in text)
+    ):
+        region = "cotai"
+    if any(k in text for k in nam_kw) and op in ("sjm", "mgm", "melco", "wynn"):
+        region = "nam_van"
+    mid = len(allowed_dates) // 2
+    ds_pick = allowed_dates[mid] if allowed_dates else ""
+    return {
+        "id": str(idx),
+        "region": region,
+        "primary_venue": (ev.get("location") or "")[:80] or "—",
+        "active_dates": [ds_pick] if ds_pick else [],
+    }
+
+
+def _footfall_ai_assign_top_events(
+    events: list[dict],
+    from_date: str,
+    to_date: str,
+    allowed_dates: list[str],
+) -> list[dict]:
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return []
+    lines = []
+    for i, ev in enumerate(events):
+        lines.append(
+            f"[{i}] name={ev.get('name','')[:200]}\n"
+            f"    operator={ev.get('operator','')}\n"
+            f"    location={ev.get('location','')[:120]}\n"
+            f"    date_hint={ev.get('date','')[:120]}\n"
+            f"    heat={ev.get('heat_score')}\n"
+            f"    desc={str(ev.get('description',''))[:400]}"
+        )
+    prompt = f"""你是澳门大型综合度假村活动与地理分析助手。用户查询日期范围：{from_date} 至 {to_date}（含首尾）。
+
+{FOOTFALL_MACAU_VENUE_REFERENCE_ZH}
+
+## 任务
+下面最多 {len(events)} 个活动（已按热度优先列出）。请为每个活动判断：
+1. **region**：活动主要发生所在统计分区，只能填 **cotai**（路氹填海区）或 **nam_van**（外港及南湾湖新填海区）。
+2. **primary_venue**：活动举办场所，尽量用上面名单中的酒店/场所简称（如「澳门威尼斯人」）。
+3. **active_dates**：该活动在上述查询范围内**实际举办**的公历日期列表，格式 YYYY-MM-DD。若活动跨多天，列出全部日期且必须 ⊆ 允许日期集合。
+   - 允许日期集合（你必须只使用这些日期）：{json.dumps(allowed_dates, ensure_ascii=False)}
+   - 若文案未写清日期，可根据 date_hint 推断；仍无法确定则取与 date_hint 最接近日的一条或该范围内中间一日（只能一条）。
+
+只输出一个 JSON 对象，格式严格如下（不要 markdown）：
+{{
+  "assignments": [
+    {{"id": "0", "region": "cotai", "primary_venue": "澳门威尼斯人", "active_dates": ["2026-03-15"]}}
+  ]
+}}
+id 必须与下方 [0]..[{max(0, len(events)-1)}] 对应。"""
+    prompt += "\n\n## 活动列表\n" + "\n".join(lines)
+    try:
+        resp = client.chat.completions.create(
+            model=DEEPSEEK_JSON_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.15,
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        data = _footfall_parse_json_object(raw)
+        return list(data.get("assignments") or [])
+    except Exception as e:
+        print(f"⚠️ footfall AI assign failed: {e}")
+        return []
+
+
+def _footfall_allocate_visitors(
+    events: list[dict],
+    assignments: list[dict],
+    zone_by_date: dict[str, dict],
+    allowed_dates: set[str],
+) -> dict:
+    """按 (region, ds) 分组，同区同日多活动按 heat_score 比例分配该区当日预测客流。"""
+    # id -> assignment
+    by_id: dict = {}
+    for a in assignments:
+        i = str(a.get("id", "")).strip()
+        if i:
+            by_id[i] = a
+
+    n = len(events)
+    for idx in range(n):
+        sid = str(idx)
+        if sid not in by_id:
+            by_id[sid] = _footfall_fallback_assignment(idx, events[idx], sorted(allowed_dates))
+
+    # 规范化 active_dates
+    for sid, a in list(by_id.items()):
+        ads = a.get("active_dates") or []
+        clean = []
+        for x in ads if isinstance(ads, list) else []:
+            s = str(x).strip()[:10]
+            if len(s) == 10 and s[4] == "-" and s[7] == "-" and s in allowed_dates:
+                clean.append(s)
+        a["active_dates"] = sorted(set(clean))
+        r = (a.get("region") or "").lower().strip()
+        if r not in ("cotai", "nam_van"):
+            a["region"] = "cotai"
+        else:
+            a["region"] = r
+
+    alist = sorted(allowed_dates)
+    for idx, ev in enumerate(events):
+        sid = str(idx)
+        a = by_id.get(sid, {})
+        if not a.get("active_dates"):
+            hint = str(ev.get("date") or "")
+            pick = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", hint) if d in allowed_dates]
+            if not pick and alist:
+                pick = [alist[len(alist) // 2]]
+            a["active_dates"] = pick
+            by_id[sid] = a
+
+    # (region, ds) -> list of (idx, heat)
+    buckets: dict = defaultdict(list)
+    for idx, ev in enumerate(events):
+        a = by_id.get(str(idx), {})
+        region = a.get("region") or "cotai"
+        heat = float(ev.get("heat_score") or 0) or 0.1
+        for ds in a.get("active_dates") or []:
+            if ds not in zone_by_date:
+                continue
+            buckets[(region, ds)].append((idx, heat))
+
+    per_event_daily: dict = defaultdict(list)
+    totals: dict = defaultdict(float)
+
+    for (region, ds), lst in buckets.items():
+        z = zone_by_date.get(ds) or {}
+        ztot = float(z.get("cotai" if region == "cotai" else "nam_van") or 0)
+        sh = sum(max(h, 0.1) for _, h in lst)
+        for idx, h in lst:
+            share = ztot * (max(h, 0.1) / sh)
+            per_event_daily[idx].append(
+                {
+                    "ds": ds,
+                    "visitors": round(share, 1),
+                    "zone_total_that_day": round(ztot, 1),
+                    "region": region,
+                }
+            )
+            totals[idx] += share
+
+    out_by_key: dict = {}
+    for idx, ev in enumerate(events):
+        key = (ev.get("key") or "").strip() or f"{ev.get('name','')}|{ev.get('operator','')}"
+        days = per_event_daily.get(idx) or []
+        tot = totals.get(idx, 0)
+        avg = (tot / len(days)) if days else 0
+        a = by_id.get(str(idx), {})
+        out_by_key[key] = {
+            "region": a.get("region"),
+            "primary_venue": a.get("primary_venue") or "—",
+            "daily": days,
+            "total_visitors": round(tot, 1),
+            "avg_daily_visitors": round(avg, 1),
+            "days_count": len(days),
+        }
+    return out_by_key
+
+
+@app.get("/api/footfall-predict")
+async def api_footfall_predict(ds: str, ai: bool = True):
+    """单日全澳 Prophet + 两区拆分（5 个 0/1 可由 DeepSeek + finaldata1 连续变量）。"""
+    load_dotenv()
+    model_path = Path(os.getenv("FOOTFALL_MODEL_PATH", str(BRIDGE_ROOT / "footfall" / "fitted_prophet.joblib")))
+    zone_csv = Path(os.getenv("FOOTFALL_ZONE_CSV", str(BRIDGE_ROOT / "footfall" / "zone_table1_monthly_share.csv")))
+    ds = (ds or "").strip()[:10]
+    if len(ds) < 10 or ds[4] != "-" or ds[7] != "-":
+        raise HTTPException(status_code=400, detail="ds 須為 YYYY-MM-DD")
+    if not model_path.is_file():
+        return {
+            "ok": False,
+            "error": "model_not_found",
+            "message": "未找到 Prophet 模型文件",
+            "model_path": str(model_path.resolve()),
+        }
+    if not zone_csv.is_file():
+        return {
+            "ok": False,
+            "error": "zone_csv_not_found",
+            "message": "未找到 zone_table1_monthly_share.csv",
+            "zone_csv": str(zone_csv.resolve()),
+        }
+    footfall_dir = BRIDGE_ROOT / "footfall"
+    try:
+        row = _footfall_predict_row_for_date(
+            ds,
+            model_path=model_path,
+            zone_csv=zone_csv,
+            footfall_dir=footfall_dir,
+            fast=not ai,
+        )
+    except Exception as e:
+        return {"ok": False, "error": "predict_failed", "message": str(e)}
+    return {"ok": True, **row}
+
+
+@app.post("/api/footfall-event-allocate")
+async def api_footfall_event_allocate(payload: dict):
+    """
+    对热度 Top 活动：Prophet 给出每日两区客流，DeepSeek 判定分区/场地/日期后，按热度在同区同日拆分。
+    payload: {{
+      "from_date": "2026-03-01",
+      "to_date": "2026-03-31",
+      "events": [ {{"key", "name", "description", "location", "operator", "heat_score", "date"}} ]
+    }}
+    """
+    load_dotenv()
+    from_date = (payload.get("from_date") or "").strip()[:10]
+    to_date = (payload.get("to_date") or "").strip()[:10]
+    events_in = payload.get("events") or []
+    if not events_in or not from_date or not to_date:
+        return {"ok": False, "message": "需要 from_date、to_date 与 events"}
+
+    model_path = Path(os.getenv("FOOTFALL_MODEL_PATH", str(BRIDGE_ROOT / "footfall" / "fitted_prophet.joblib")))
+    zone_csv = Path(os.getenv("FOOTFALL_ZONE_CSV", str(BRIDGE_ROOT / "footfall" / "zone_table1_monthly_share.csv")))
+    if not model_path.is_file() or not zone_csv.is_file():
+        return {"ok": False, "message": "缺少 fitted_prophet.joblib 或 zone CSV"}
+
+    allowed = _footfall_enumerate_dates(from_date, to_date)
+    if len(allowed) > 150:
+        return {"ok": False, "message": "日期范围过长（最多 150 天）"}
+    allowed_set = set(allowed)
+
+    footfall_dir = BRIDGE_ROOT / "footfall"
+    # 默認 fast：逐日 CSV 连续变量 + Prophet，不调 DeepSeek。
+    # FAST=0：每个自然日各问一次 EXCHANGE/PRICE + 五个 0/1；同日多活动共用 zone_by_date[ds]（按日只算一次）。
+    _alloc_fast = os.getenv("FOOTFALL_ALLOCATE_FAST", "1").strip().lower() not in ("0", "false", "no")
+    print(
+        f"[footfall-allocate] 计算 {len(allowed)} 天 zone 客流（Prophet；FAST={_alloc_fast}；"
+        f"按日 EXCHANGE/PRICE={'CSV' if _alloc_fast else 'AI+CSV 回退'}）…"
+    )
+    zone_by_date: dict = {}
+    for i, ds in enumerate(allowed):
+        try:
+            if (i + 1) % 7 == 1 or i == 0 or i == len(allowed) - 1:
+                print(f"[footfall-allocate]   … {i + 1}/{len(allowed)} {ds}")
+            row = _footfall_predict_row_for_date(
+                ds,
+                model_path=model_path,
+                zone_csv=zone_csv,
+                footfall_dir=footfall_dir,
+                fast=_alloc_fast,
+                continuous_override=None,
+                no_per_day_continuous_ai=False,
+            )
+            zone_by_date[ds] = {
+                "macau_total": row["macau_total"],
+                "cotai": row["zone_cotai"],
+                "nam_van": row["zone_namvan"],
+            }
+        except Exception as e:
+            print(f"⚠️ footfall zone row {ds}: {e}")
+            zone_by_date[ds] = {"macau_total": 0.0, "cotai": 0.0, "nam_van": 0.0}
+    print("[footfall-allocate] zone 完成 → DeepSeek 活动分区/拆分")
+
+    events = events_in[:10]
+    for ev in events:
+        if not (ev.get("key") or "").strip():
+            ev["key"] = f"{(ev.get('name') or '').strip()}|{(ev.get('operator') or '').lower()}"
+
+    assigns = _footfall_ai_assign_top_events(events, from_date, to_date, allowed)
+    if not assigns:
+        assigns = [_footfall_fallback_assignment(i, events[i], allowed) for i in range(len(events))]
+
+    by_key = _footfall_allocate_visitors(events, assigns, zone_by_date, allowed_set)
+    return {
+        "ok": True,
+        "by_key": by_key,
+        "zone_totals_by_date": zone_by_date,
+        "labels": {"cotai": "路氹填海區", "nam_van": "外港及南灣湖新填海區"},
+    }
 
 
 @app.get("/api/v2/analyze")
@@ -2269,6 +2863,578 @@ async def heat_leaderboard_ai_refresh(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 負面監測（XHS / 微博 / IG / FB 關鍵字專表 + 兩階段 AI；IG·FB 經 Apify）
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _xhs_json_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "xhs", "json")
+
+
+def _weibo_json_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "weibo", "json")
+
+
+def load_search_comments_index(json_dir: str) -> dict:
+    """合併 search_comments_*.json → { note_id: [comment_text, ...] }。"""
+    by_note: dict[str, list] = defaultdict(list)
+    if not json_dir or not os.path.isdir(json_dir):
+        return {}
+    for path in glob.glob(os.path.join(json_dir, "search_comments_*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if not isinstance(data, list):
+            continue
+        for c in data:
+            if not isinstance(c, dict):
+                continue
+            nid = str(c.get("note_id") or "").strip()
+            txt = (c.get("content") or "").strip()
+            if nid and txt:
+                by_note[nid].append(txt)
+    return dict(by_note)
+
+
+def load_xhs_search_comments_index(json_dir: str | None = None) -> dict:
+    return load_search_comments_index(json_dir or _xhs_json_dir())
+
+
+def _note_id_from_posts_row(row: dict) -> str:
+    nid0 = row.get("note_id")
+    if nid0 is not None and str(nid0).strip():
+        return str(nid0).strip()
+    rj = row.get("raw_json")
+    if rj:
+        try:
+            raw = json.loads(rj) if isinstance(rj, str) else rj
+            nid = raw.get("note_id")
+            if nid:
+                return str(nid)
+        except Exception:
+            pass
+    pid = str(row.get("post_id") or "")
+    if pid.startswith("xhs_"):
+        return pid[4:]
+    if pid.startswith("weibo_"):
+        return pid[7:]
+    if pid.startswith("ig_"):
+        return pid[3:]
+    if pid.startswith("fb_"):
+        return pid[3:]
+    return pid
+
+
+def _lexicon_hits(text: str) -> list:
+    if not text:
+        return []
+    t = str(text)
+    found = [w for w in NEGATIVE_MONITOR_LEXICON if w in t]
+    return list(dict.fromkeys(found))[:20]
+
+
+def _parse_llm_json_array(raw: str) -> list:
+    if not raw:
+        return []
+    s = raw.strip().replace("\ufeff", "")
+    s = re.sub(r"^```(?:json|JSON)?\s*", "", s)
+    s = re.sub(r"\s*```\s*$", "", s).strip()
+    try:
+        out = json.loads(s)
+        return out if isinstance(out, list) else []
+    except json.JSONDecodeError:
+        pass
+    i = s.find("[")
+    j = s.rfind("]")
+    if i != -1 and j != -1 and j > i:
+        chunk = s[i : j + 1]
+        try:
+            out = json.loads(chunk)
+            return out if isinstance(out, list) else []
+        except json.JSONDecodeError:
+            pass
+    k = s.find("{")
+    m = s.rfind("}")
+    if k != -1 and m != -1 and m > k:
+        try:
+            obj = json.loads(s[k : m + 1])
+            if isinstance(obj, dict):
+                for key in ("items", "results", "data", "list"):
+                    v = obj.get(key)
+                    if isinstance(v, list):
+                        return v
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
+def _deepseek_score_negative_monitor(items: list[dict]) -> list[dict]:
+    if not items:
+        return []
+    lines = []
+    for it in items:
+        pid = it.get("id") or ""
+        blob = f"{it.get('title') or ''}\n{it.get('body') or ''}\n【評論摘錄】{it.get('comments_sample') or '無'}"[:1200]
+        lines.append(f"### post_id={pid}\n{blob}")
+    prompt = """你是澳門博企公關風險分析助手。以下每條均為社交媒體（微博、小紅書等）上與「永利／永利皇宮／Wynn」相關的貼文摘要（含部分評論）。
+請逐條判斷是否對「永利 Wynn」品牌有明顯負面影響或潛在輿情風險，例如：避雷吐槽、服務/衛生投訴、差評、惡性事件傳聞、可能造謠需警惕等。
+注意：單純打卡分享、中性攻略、正面種草、無關抱怨（未指向永利）應判為非負面。
+
+只輸出一段 JSON：要麼是數組，要麼是對象且含 "items" 數組，不要其它文字、不要 Markdown。示例數組：
+[{"post_id":"與上文一致","negative":false,"severity":0,"reason":"繁體短句","triggers":[]}]
+其中 severity: 0=無負面 1=輕微情緒 2=明確負面 3=嚴重/安全法律敏感
+post_id 必須與 ### 行完全一致。
+
+貼文列表：
+""" + "\n".join(lines)
+
+    try:
+        resp = client.chat.completions.create(
+            model=DEEPSEEK_JSON_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=min(4096, 350 * len(items) + 400),
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        out = _parse_llm_json_array(raw)
+        return out
+    except Exception as e:
+        print(f"⚠️ _deepseek_score_negative_monitor: {e}")
+        return []
+
+
+NEGATIVE_MONITOR_FETCH_CAP = max(1, min(20000, int(os.environ.get("NEGATIVE_MONITOR_FETCH_CAP", "300"))))
+NEGATIVE_MONITOR_AI_BATCH = max(2, min(12, int(os.environ.get("NEGATIVE_MONITOR_AI_BATCH", "8"))))
+NEGATIVE_MONITOR_PHASE2_RECENT = max(1, min(500, int(os.environ.get("NEGATIVE_MONITOR_PHASE2_RECENT", "100"))))
+
+
+def _nm_run_ai_batches(ai_candidates: list, bs: int) -> list:
+    ai_flat: list[dict] = []
+    if not ai_candidates:
+        return ai_flat
+    for start in range(0, len(ai_candidates), bs):
+        chunk = ai_candidates[start : start + bs]
+        payload = [
+            {
+                "id": c["post_id"],
+                "title": c["title"],
+                "body": c["content_preview"],
+                "comments_sample": c["comments_sample"][:1800],
+            }
+            for c in chunk
+        ]
+        part = _deepseek_score_negative_monitor(payload)
+        by_pid = {
+            str(h.get("post_id")): h
+            for h in part
+            if isinstance(h, dict) and h.get("post_id")
+        }
+        for c in chunk:
+            hit = by_pid.get(str(c["post_id"]))
+            if not hit:
+                continue
+            ai_flat.append({
+                "post_id": c["post_id"],
+                "note_id": c["note_id"],
+                "negative": bool(hit.get("negative")),
+                "severity": int(hit.get("severity") or 0),
+                "reason": hit.get("reason") or "",
+                "triggers": hit.get("triggers") or [],
+            })
+    return ai_flat
+
+
+NEGATIVE_MONITOR_SOURCES = ("xhs", "weibo", "ig", "fb")
+# 進程啟動時刻（Unix 秒）；重啟 bridge 即變，供前端清空「以為延續上一次分析」的本地狀態
+NEGATIVE_MONITOR_BRIDGE_BOOT_TS = time.time()
+
+
+def _normalize_negative_monitor_source(s: str) -> str | None:
+    v = (s or "").strip().lower()
+    if v in ("", "xhs", "xiaohongshu", "redbook"):
+        return "xhs"
+    if v in ("weibo", "wb"):
+        return "weibo"
+    if v in ("ig", "instagram", "ins"):
+        return "ig"
+    if v in ("fb", "facebook"):
+        return "fb"
+    return None
+
+
+@app.post("/api/v2/negative-monitor/crawl")
+@app.post("/api/v2/wynn-negative/crawl")
+async def negative_monitor_crawl(
+    max_comments: int = 40,
+    headless: str = "0",
+    keywords: str = "",
+    get_comments: int = 1,
+    max_notes: int = 0,
+    source: str = "xhs",
+    from_date: str = "",
+    to_date: str = "",
+):
+    src = _normalize_negative_monitor_source(source)
+    if not src:
+        return {
+            "status": "error",
+            "message": f"不支持的 source，可選：{', '.join(NEGATIVE_MONITOR_SOURCES)}",
+        }
+    global _neg_monitor_crawl_running
+    with _neg_monitor_crawl_lock:
+        if _neg_monitor_crawl_running:
+            return {"status": "busy", "message": "已有負面監測採集任務在執行"}
+        _neg_monitor_crawl_running = True
+
+    kw_csv = keywords.strip() or None
+    mn = int(max_notes) if int(max_notes) > 0 else None
+    gc = bool(int(get_comments))
+    cf = (from_date or "").strip()[:10] or None
+    ct = (to_date or "").strip()[:10] or None
+
+    def _job(mc, hl, kws, do_comments, notes_cap, platform: str, crawl_from: str | None, crawl_to: str | None):
+        global _neg_monitor_crawl_running
+        try:
+            if platform == "weibo":
+                run_weibo_negative_monitor_crawl(
+                    max_comments_per_note=mc,
+                    headless=hl,
+                    keywords_csv=kws,
+                    get_comments=do_comments,
+                    max_notes=notes_cap,
+                    crawl_from_date=crawl_from,
+                    crawl_to_date=crawl_to,
+                )
+            elif platform == "ig":
+                run_ig_negative_monitor_crawl(
+                    keywords_csv=kws,
+                    max_notes=notes_cap,
+                    crawl_from_date=crawl_from,
+                    crawl_to_date=crawl_to,
+                )
+            elif platform == "fb":
+                run_fb_negative_monitor_crawl(
+                    keywords_csv=kws,
+                    max_notes=notes_cap,
+                    crawl_from_date=crawl_from,
+                    crawl_to_date=crawl_to,
+                )
+            else:
+                run_xhs_negative_monitor_crawl(
+                    max_comments_per_note=mc,
+                    headless=hl,
+                    keywords_csv=kws,
+                    get_comments=do_comments,
+                    max_notes=notes_cap,
+                    crawl_from_date=crawl_from,
+                    crawl_to_date=crawl_to,
+                )
+        finally:
+            with _neg_monitor_crawl_lock:
+                _neg_monitor_crawl_running = False
+
+    _storage_map = {
+        "weibo": "weibo_negative_monitor",
+        "xhs": "xhs_negative_monitor",
+        "ig": "ig_negative_monitor",
+        "fb": "fb_negative_monitor",
+    }
+    storage = _storage_map.get(src, "xhs_negative_monitor")
+    threading.Thread(
+        target=_job,
+        args=(max_comments, headless, kw_csv, gc, mn, src, cf, ct),
+        daemon=True,
+    ).start()
+    return {
+        "status": "started",
+        "message": "後台採集中；完成後請 GET /api/v2/negative-monitor/analyze",
+        "storage": storage,
+        "source": src,
+    }
+
+
+@app.get("/api/v2/negative-monitor/status")
+async def negative_monitor_status():
+    with _neg_monitor_crawl_lock:
+        busy = _neg_monitor_crawl_running
+    return {
+        "crawl_running": busy,
+        "supported_sources": list(NEGATIVE_MONITOR_SOURCES),
+        "bridge_boot_ts": NEGATIVE_MONITOR_BRIDGE_BOOT_TS,
+    }
+
+
+@app.get("/api/v2/negative-monitor/analyze")
+@app.get("/api/v2/wynn-negative/analyze")
+async def negative_monitor_analyze(
+    from_date: str = "",
+    to_date: str = "",
+    phase: int = 1,
+    phase2_offset: int = 0,
+    limit: int = 300,
+    use_ai: int = 1,
+    lexicon_only_for_ai: int = 0,
+    ai_max: int = 60,
+    batch_size: int = 8,
+    source: str = "xhs",
+):
+    src = _normalize_negative_monitor_source(source)
+    if not src:
+        return {
+            "status": "error",
+            "hint": f"不支持的 source，可選：{', '.join(NEGATIVE_MONITOR_SOURCES)}",
+            "supported_sources": list(NEGATIVE_MONITOR_SOURCES),
+        }
+
+    ph = int(phase)
+    cap = min(int(limit), NEGATIVE_MONITOR_FETCH_CAP) if int(limit) > 0 else NEGATIVE_MONITOR_FETCH_CAP
+    bs = NEGATIVE_MONITOR_AI_BATCH
+    mod = {
+        "weibo": "weibo_negative_monitor",
+        "xhs": "xhs_negative_monitor",
+        "ig": "ig_negative_monitor",
+        "fb": "fb_negative_monitor",
+    }.get(src, "xhs_negative_monitor")
+
+    if src == "weibo":
+        df = query_weibo_negative_monitor(
+            from_date or None,
+            to_date or None,
+            limit=cap,
+        )
+        comments_idx = load_search_comments_index(_weibo_json_dir())
+    elif src == "ig":
+        df = query_ig_negative_monitor(
+            from_date or None,
+            to_date or None,
+            limit=cap,
+        )
+        comments_idx = {}
+    elif src == "fb":
+        df = query_fb_negative_monitor(
+            from_date or None,
+            to_date or None,
+            limit=cap,
+        )
+        comments_idx = {}
+    else:
+        df = query_xhs_negative_monitor(
+            from_date or None,
+            to_date or None,
+            limit=cap,
+        )
+        comments_idx = load_xhs_search_comments_index()
+
+    empty = {
+        "status": "success",
+        "module": mod,
+        "source": src,
+        "phase": ph,
+        "total_posts": 0,
+        "items": [],
+        "ai_updates": [],
+        "ai_flagged": [],
+        "hint": "無數據。可先 POST /api/v2/negative-monitor/crawl（帶 source=xhs|weibo|ig|fb），或調整時間範圍。",
+    }
+    if df.empty:
+        return empty
+
+    records = df.to_dict(orient="records")
+    built: list[dict] = []
+    for row in records:
+        nid = _note_id_from_posts_row(row)
+        coms = comments_idx.get(nid, [])
+        com_sample = " | ".join(coms[:25])[:2500]
+        title = (row.get("title") or "").strip()
+        body = row.get("content") or ""
+        if not title and body:
+            title = (body[:100] + "…") if len(body) > 100 else body
+        lex_h = _lexicon_hits(f"{title}\n{body}\n{com_sample}")
+        built.append({
+            "post_id": row.get("post_id"),
+            "note_id": nid,
+            "title": title,
+            "content_preview": (body or "")[:500],
+            "published_at": row.get("published_at"),
+            "post_url": row.get("post_url") or "",
+            "source_keyword": row.get("source_keyword") or "",
+            "comment_count_file": len(coms),
+            "lexicon_hits": lex_h,
+            "comments_sample": com_sample,
+        })
+
+    if ph == 2:
+        def _pub_key(it):
+            return (it.get("published_at") or "")[:19] or ""
+
+        ranked = sorted(built, key=_pub_key, reverse=True)
+        eligible = [x for x in ranked if not x.get("lexicon_hits")]
+        n = NEGATIVE_MONITOR_PHASE2_RECENT
+        off = max(0, int(phase2_offset))
+
+        if not eligible:
+            return {
+                "status": "success",
+                "module": mod,
+                "source": src,
+                "phase": 2,
+                "total_posts": len(built),
+                "fetch_cap": cap,
+                "phase2_recent_n": n,
+                "phase2_offset": 0,
+                "phase2_next_offset": 0,
+                "phase2_exhausted": True,
+                "phase2_eligible_total": 0,
+                "ai_scanned": 0,
+                "items_batch": [],
+                "ai_updates": [],
+                "ai_flagged": [],
+                "message_en": "Step 2 skipped: every loaded post had lexicon hits (Step 1 already sent those to AI).",
+            }
+
+        recent = eligible[off : off + n]
+        next_off = off + len(recent)
+        exhausted = next_off >= len(eligible) or len(recent) == 0
+
+        if not recent:
+            return {
+                "status": "success",
+                "module": mod,
+                "source": src,
+                "phase": 2,
+                "total_posts": len(built),
+                "fetch_cap": cap,
+                "phase2_recent_n": n,
+                "phase2_offset": off,
+                "phase2_next_offset": off,
+                "phase2_exhausted": True,
+                "phase2_eligible_total": len(eligible),
+                "ai_scanned": 0,
+                "items_batch": [],
+                "ai_updates": [],
+                "ai_flagged": [],
+                "message_en": "No more Step-2-eligible posts (no lexicon hits) in this range for the current offset.",
+            }
+
+        if int(use_ai):
+            ai_flat = _nm_run_ai_batches(recent, bs)
+        else:
+            ai_flat = []
+        by_pid_ai = {a["post_id"]: dict(a) for a in ai_flat}
+        items_batch = []
+        for c in recent:
+            row = {k: v for k, v in c.items() if k != "ai"}
+            row["ai"] = by_pid_ai.get(c["post_id"])
+            items_batch.append(row)
+        ai_updates = [{"post_id": a["post_id"], "ai": dict(a)} for a in ai_flat]
+        return {
+            "status": "success",
+            "module": mod,
+            "source": src,
+            "phase": 2,
+            "total_posts": len(built),
+            "posts_fetched": len(built),
+            "fetch_cap": cap,
+            "phase2_recent_n": n,
+            "phase2_offset": off,
+            "phase2_next_offset": next_off,
+            "phase2_exhausted": exhausted,
+            "phase2_eligible_total": len(eligible),
+            "ai_scanned": len(recent),
+            "items_batch": items_batch,
+            "ai_updates": ai_updates,
+            "ai_flagged": [a for a in ai_flat if a.get("negative")],
+            "message_en": (
+                f"Full AI on {len(recent)} posts with no lexicon hits (Step 1 never sent them), "
+                f"batch rank #{off + 1}–{off + len(recent)} of {len(eligible)} eligible (newest first). "
+                f"{'No further Step-2 batches.' if exhausted else 'Click Step 2 again for the next 100 eligible posts.'}"
+            ),
+        }
+
+    ai_candidates = [x for x in built if x["lexicon_hits"]]
+    if int(use_ai):
+        ai_flat = _nm_run_ai_batches(ai_candidates, bs)
+    else:
+        ai_flat = []
+    neg_by_pid = {a["post_id"]: a for a in ai_flat}
+    for item in built:
+        item["ai"] = neg_by_pid.get(item["post_id"])
+
+    lex_rows = [x for x in built if x.get("lexicon_hits")]
+    if not lex_rows:
+        plat_zh = {"weibo": "微博", "xhs": "小紅書", "ig": "Instagram", "fb": "Facebook"}.get(src, "小紅書")
+        return {
+            "status": "success",
+            "module": mod,
+            "source": src,
+            "phase": 1,
+            "posts_fetched": len(built),
+            "total_posts": len(built),
+            "fetch_cap": cap,
+            "ai_scanned": 0,
+            "lexicon_only_for_ai": True,
+            "items": [],
+            "ai_flagged": [],
+            "hint": (
+                f"載入 {len(built)} 條{plat_zh}帖，但沒有任何帖命中監測用負面詞表（lexicon）。"
+                f"表格僅顯示有詞表命中的帖。可用 Step 2 對「無詞表命中」的帖做全文 AI（與 {plat_zh} 同邏輯）。"
+            ),
+            "message_en": (
+                f"Loaded {len(built)} {src} posts in range; none hit the monitoring lexicon. "
+                "Table lists lexicon hits only — empty. Use Step 2 for full AI on posts without lexicon hits."
+            ),
+        }
+
+    return {
+        "status": "success",
+        "module": mod,
+        "source": src,
+        "phase": 1,
+        "posts_fetched": len(built),
+        "total_posts": len(built),
+        "fetch_cap": cap,
+        "ai_scanned": len(ai_candidates),
+        "lexicon_only_for_ai": True,
+        "items": lex_rows,
+        "ai_flagged": [a for a in ai_flat if a.get("negative")],
+        "message_en": (
+            f"Step 1 ({src}): {len(built)} posts loaded in range, {len(lex_rows)} with lexicon hits (table shows these only). "
+            "Step 2: full AI on posts with no lexicon hits, up to 100 per click (same logic as XHS)."
+        ),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _find_free_listen_port(host: str, start: int, attempts: int = 32) -> tuple[int, bool]:
+    """在本機 host 上從 start 起試綁定，返回 (端口, 是否與 start 不同)。全滿則 SystemExit。"""
+    import socket
+
+    for p in range(start, start + attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind((host, p))
+            return p, p != start
+        except OSError:
+            continue
+    raise SystemExit(
+        f"❌ {host} 在 {start}–{start + attempts - 1} 均無可用端口；請關閉佔用進程或 export BRIDGE_PORT=其它埠"
+    )
+
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=9038)
+    _host = "127.0.0.1"
+    _preferred = int(os.environ.get("BRIDGE_PORT", "9038"))
+    _access_log = os.environ.get("BRIDGE_ACCESS_LOG", "1").strip().lower() not in ("0", "false", "no")
+    _port, _bumped = _find_free_listen_port(_host, _preferred)
+    if _bumped:
+        print(
+            f"⚠️  端口 {_preferred} 已被佔用，已改用 {_port}。"
+            f"（若需固定 9038，請先關掉舊的 bridge：`lsof -iTCP:{_preferred} -sTCP:LISTEN`）"
+        )
+    print(f"🌐 http://{_host}:{_port}  （強制指定埠：export BRIDGE_PORT=…）")
+    print(f"📋 負面監測: http://{_host}:{_port}/negative-monitor")
+    if not _access_log:
+        print("ℹ️  HTTP access log 已關閉（BRIDGE_ACCESS_LOG=0），終端唔再逐條打印 GET/POST")
+    uvicorn.run(app, host=_host, port=_port, access_log=_access_log)
