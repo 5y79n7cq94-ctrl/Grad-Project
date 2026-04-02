@@ -85,13 +85,6 @@ def _crawl_platform(platform, selected_ops, category):
     """爬取指定平台的所有運營商（XHS / 微博，原有邏輯）"""
     base_path = os.path.dirname(os.path.abspath(__file__))
     main_py   = os.path.join(base_path, "main.py")
-    if not os.path.exists(main_py):
-        print(f"❌ Crawler entry not found: {main_py}")
-        print("⚠️ Skipping crawl because the local MediaCrawler entry script is missing.")
-        print("💡 Restore main.py or update task_manager.py to point to the current crawler entry.")
-        for op in selected_ops:
-            mark_as_crawled(op, category)
-        return
     cli_platform = "wb" if platform == "wb" else platform
     data_dir     = "weibo" if platform == "wb" else platform
     json_dir     = os.path.join(base_path, "data", data_dir, "json")
