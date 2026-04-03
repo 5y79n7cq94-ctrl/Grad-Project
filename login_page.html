@@ -245,19 +245,15 @@ input:focus, select:focus{outline:none; border-color:var(--brand); background:#f
           <option>Operations</option>
           <option>Marketing</option>
           <option>IT &amp; Systems</option>
-          <option>HR</option>
-          <option>Executive</option>
-          <option>Other</option>
         </select>
       </div>
       <div class="field">
         <label>Position / Role</label>
         <select id="reg-role">
           <option value="" disabled selected>Select role</option>
-          <option>Executive</option>
           <option>Analyst</option>
-          <option>Senior Analyst</option>
           <option>Manager</option>
+          <option>Executive</option>
           <option>Director</option>
           <option>IT Admin</option>
         </select>
@@ -425,9 +421,7 @@ input:focus, select:focus{outline:none; border-color:var(--brand); background:#f
 </div><!-- end wrapper -->
 
 <script>
-const API = (typeof window !== 'undefined' && (window.location.protocol === 'http:' || window.location.protocol === 'https:'))
-  ? window.location.origin.replace(/\/$/, '')
-  : 'http://127.0.0.1:9038';
+const API = 'http://127.0.0.1:9038';
 
 // ── Navigation ──────────────────────────────────────────────────────────────
 function showView(id) {

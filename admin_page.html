@@ -291,6 +291,14 @@ tbody tr:hover{background:#F8FAFC;}
       <select id="adm-filter-dept" class="filter-select" onchange="admRenderTable()">
         <option value="">All Departments</option>
       </select>
+      <select id="adm-filter-position" class="filter-select" onchange="admRenderTable()">
+        <option value="">All Positions</option>
+        <option value="Analyst">Analyst</option>
+        <option value="Manager">Manager</option>
+        <option value="Executive">Executive</option>
+        <option value="Director">Director</option>
+        <option value="IT Admin">IT Admin</option>
+      </select>
       <select id="adm-filter-role" class="filter-select" onchange="admRenderTable()">
         <option value="">All Roles</option>
         <option value="admin">Admin</option>
@@ -362,23 +370,22 @@ tbody tr:hover{background:#F8FAFC;}
           <select id="adm-m-dept" class="modal-select">
             <option value="" disabled selected>Select department</option>
             <option>Analytics</option><option>Finance</option><option>Operations</option>
-            <option>Marketing</option><option>IT &amp; Systems</option><option>HR</option>
-            <option>Executive</option><option>Other</option>
+            <option>Marketing</option><option>IT &amp; Systems</option>
           </select>
         </div>
         <div style="margin-bottom:16px;">
           <label class="modal-label">Position</label>
           <select id="adm-m-position" class="modal-select">
             <option value="" disabled selected>Select position</option>
-            <option>Executive</option><option>Analyst</option><option>Senior Analyst</option>
-            <option>Manager</option><option>Director</option><option>IT Admin</option>
+            <option>Analyst</option><option>Manager</option>
+            <option>Executive</option><option>Director</option><option>IT Admin</option>
           </select>
         </div>
         <div style="margin-bottom:16px;grid-column:1/-1;">
           <label class="modal-label">System Role</label>
           <select id="adm-m-role" class="modal-select">
-            <option value="user">User — Standard access</option>
-            <option value="admin">Admin — Full access</option>
+            <option value="user">User — Access to Operation panel</option>
+            <option value="admin">Admin — Access to Admin Panel</option>
           </select>
         </div>
         <div id="adm-m-pw-field" style="margin-bottom:16px;grid-column:1/-1;">
@@ -532,6 +539,7 @@ function admPopulateDeptFilter() {
 function admRenderTable() {
   const q    = document.getElementById('adm-search').value.toLowerCase();
   const dept = document.getElementById('adm-filter-dept').value;
+  const position = document.getElementById('adm-filter-position').value;
   const role = document.getElementById('adm-filter-role').value;
   const ADM_COLORS = ['#2563EB','#7C3AED','#DB2777','#D97706','#059669','#0891B2','#DC2626','#16A34A'];
 
@@ -539,8 +547,9 @@ function admRenderTable() {
     const matchQ = !q || [u['First Name'],u['Last Name'],u['Email Address'],u.Department,u.Position]
       .some(v => v && v.toLowerCase().includes(q));
     const matchD = !dept || u.Department === dept;
+    const matchP = !position || u.Position === position;
     const matchR = !role || (role === 'admin' ? u.Position === 'IT Admin' : u.Position !== 'IT Admin');
-    return matchQ && matchD && matchR;
+    return matchQ && matchD && matchP && matchR;
   });
 
   document.getElementById('adm-row-count').textContent =
@@ -669,7 +678,8 @@ function admOpenDeleteModal(userId) {
 async function admHandleSaveUser() {
   const first    = document.getElementById('adm-m-first').value.trim();
   const last     = document.getElementById('adm-m-last').value.trim();
-  const email    = document.getElementById('adm-m-email').value.trim().toLowerCase();
+  const emailEl  = document.getElementById('adm-m-email');
+  const email    = emailEl.value.trim().toLowerCase();
   const dept     = document.getElementById('adm-m-dept').value;
   const position = document.getElementById('adm-m-position').value;
   const role     = document.getElementById('adm-m-role').value;
@@ -678,6 +688,7 @@ async function admHandleSaveUser() {
   const showErr  = (msg) => { alertEl.textContent = msg; alertEl.style.display = 'block'; };
 
   if (!first || !last || !email || !dept || !position) { showErr('Please fill in all fields.'); return; }
+  if (!emailEl.checkValidity()) { showErr('Please fill in valid information'); return; }
   if (!admEditingUserId && (!password || password.length < 8)) { showErr('Password must be at least 8 characters.'); return; }
 
   const btn  = document.getElementById('adm-modal-save-btn');
