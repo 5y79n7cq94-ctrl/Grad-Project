@@ -2,7 +2,6 @@ import os, sys, json, uvicorn, re, hashlib, sqlite3, glob, time, math
 import pandas as pd
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from collections import defaultdict
 from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH, query_fb_negative_monitor, query_ig_negative_monitor, query_weibo_negative_monitor, query_xhs_negative_monitor
@@ -13,8 +12,6 @@ from dotenv import load_dotenv
 from pathlib import Path
 from fastapi.responses import FileResponse, Response
 import joblib  
-from heat_analysis_adapter import get_mediacrawler_root, get_project_analytics_service
-from heat_analysis_jobs import heat_job_manager
 
 # ── 最先 load .env，確保所有 os.getenv() 都能讀到環境變量 ──────────────────
 load_dotenv()
@@ -27,9 +24,6 @@ _crawling_lock = threading.Lock()
 _neg_monitor_crawl_lock = threading.Lock()
 _neg_monitor_crawl_running = False
 BRIDGE_ROOT = Path(__file__).resolve().parent
-WEBUI_DIR = BRIDGE_ROOT / "webui"
-STATIC_DIR = BRIDGE_ROOT / "static"
-HEAT_ANALYSIS_WEEK_FLOOR = os.getenv("HEAT_ANALYSIS_WEEK_FLOOR", "2026-03-01").strip()
 
 def _bridge_html_file(filename: str) -> FileResponse:
     p = BRIDGE_ROOT / filename
@@ -290,7 +284,6 @@ def _set_report_insights(from_date: str, to_date: str, keyword: str = "", hot_th
         conn.close()
 backfill_event_dates()
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ── Custom CORS middleware：處理本地 HTML file 嘅 null origin ──────────────
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -323,21 +316,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def _heat_service():
-    service = get_project_analytics_service()
-    service.ensure_schema()
-    return service
-
-
-def _heat_jobs():
-    return heat_job_manager
-
-
-def _file_response(path: Path) -> FileResponse:
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail=f"Missing file: {path.name}")
-    return FileResponse(path)
-
 @app.get("/")
 @app.get("/operation-panel")
 @app.get("/operation-panel/")
@@ -346,182 +324,6 @@ async def operation_panel_page():
     if not p.is_file():
         return {"error": "operation_panel.html missing", "path": str(p)}
     return FileResponse(p, media_type="text/html; charset=utf-8")
-
-
-@app.get("/project")
-async def serve_market_report_alias():
-    return _file_response(BRIDGE_ROOT / "operation_panel.html")
-
-
-@app.get("/full-web-heat-analysis")
-@app.get("/heat-analysis")
-async def serve_heat_analysis_page():
-    return _file_response(WEBUI_DIR / "heat_analysis.html")
-
-
-@app.get("/full-web-heat-analysis/trends")
-@app.get("/heat-analysis/trends")
-async def serve_heat_trends_page():
-    return _file_response(WEBUI_DIR / "heat_trends.html")
-
-
-@app.get("/api/full-web-heat-analysis/overview")
-@app.get("/api/heat-analysis/overview")
-async def get_heat_overview(platform: str = "wb", auto_sync: bool = False):
-    try:
-        service = _heat_service()
-        if auto_sync:
-            service.sync(platform=platform)
-        payload = service.get_overview(platform=platform)
-        payload["mediacrawler_root"] = str(get_mediacrawler_root())
-        return payload
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/full-web-heat-analysis/analysis-windows")
-@app.get("/api/heat-analysis/analysis-windows")
-async def get_heat_analysis_windows(platform: str = "wb", weeks: int = 24):
-    try:
-        payload = _heat_service().list_analysis_windows(platform=platform, weeks=weeks)
-        items = payload.get("items", [])
-        if HEAT_ANALYSIS_WEEK_FLOOR:
-            items = [item for item in items if str(item.get("week_start") or "") >= HEAT_ANALYSIS_WEEK_FLOOR]
-        return {
-            **payload,
-            "items": items,
-            "total": len(items),
-            "week_floor": HEAT_ANALYSIS_WEEK_FLOOR,
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/full-web-heat-analysis/event-clusters")
-@app.get("/api/heat-analysis/event-clusters")
-async def get_heat_event_clusters(
-    platform: str = "wb",
-    q: str = "",
-    dashboard_category: str = "",
-    limit: int = 30,
-    offset: int = 0,
-    week_start: str = "",
-    week_end: str = "",
-):
-    try:
-        return _heat_service().list_event_clusters(
-            platform=platform,
-            q=q,
-            dashboard_category=dashboard_category,
-            limit=limit,
-            offset=offset,
-            week_start=week_start,
-            week_end=week_end,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/full-web-heat-analysis/topic-clusters")
-@app.get("/api/heat-analysis/topic-clusters")
-async def get_heat_topic_clusters(
-    platform: str = "wb",
-    q: str = "",
-    dashboard_category: str = "",
-    limit: int = 30,
-    offset: int = 0,
-    week_start: str = "",
-    week_end: str = "",
-):
-    try:
-        return _heat_service().list_topic_clusters(
-            platform=platform,
-            q=q,
-            dashboard_category=dashboard_category,
-            limit=limit,
-            offset=offset,
-            week_start=week_start,
-            week_end=week_end,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/full-web-heat-analysis/event-trend")
-@app.get("/api/heat-analysis/event-trend")
-async def get_heat_event_trend(
-    platform: str = "wb",
-    event_family_key: str = "",
-    days: int = 7,
-    start_date: str = "",
-    end_date: str = "",
-    week_start: str = "",
-    week_end: str = "",
-):
-    try:
-        return _heat_service().get_event_discussion_trend(
-            platform=platform,
-            event_family_key=event_family_key,
-            days=days,
-            start_date=start_date,
-            end_date=end_date,
-            week_start=week_start,
-            week_end=week_end,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/full-web-heat-analysis/run-analysis")
-@app.post("/api/heat-analysis/run-analysis")
-async def run_heat_analysis(
-    platform: str = "wb",
-    status: str = "ready",
-    replace: bool = True,
-    week_start: str = "",
-    week_end: str = "",
-):
-    try:
-        if week_start or week_end:
-            return _heat_service().extract_events_weekly(
-                platform=platform,
-                week_start=week_start,
-                week_end=week_end,
-                status=status,
-                replace=replace,
-            )
-        return _heat_service().extract_events(platform=platform, status=status, replace=replace)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/full-web-heat-analysis/update-week")
-@app.post("/api/heat-analysis/update-week")
-async def update_heat_week(platform: str = "wb", week_start: str = "", week_end: str = "", db_path: str = ""):
-    try:
-        return _heat_jobs().start_update_job(
-            platform=platform,
-            week_start=week_start,
-            week_end=week_end,
-            db_path=db_path,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/api/full-web-heat-analysis/jobs")
-@app.get("/api/heat-analysis/jobs")
-async def list_heat_jobs(limit: int = 20):
-    return _heat_jobs().list_jobs(limit=limit)
-
-
-@app.get("/api/full-web-heat-analysis/jobs/{job_id}")
-@app.get("/api/heat-analysis/jobs/{job_id}")
-async def get_heat_job(job_id: str):
-    try:
-        return _heat_jobs().get_job(job_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"Heat-analysis job not found: {job_id}") from exc
 
 @app.get("/negative-monitor")
 async def negative_monitor_page():
