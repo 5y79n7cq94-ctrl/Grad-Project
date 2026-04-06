@@ -13,8 +13,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 from fastapi.responses import FileResponse, Response
 import joblib  
-from full_web_heat_adapter import get_mediacrawler_root, get_project_analytics_service
-from full_web_heat_jobs import heat_job_manager
+from heat_analysis_adapter import get_mediacrawler_root, get_project_analytics_service
+from heat_analysis_jobs import heat_job_manager
 
 # ── 最先 load .env，確保所有 os.getenv() 都能讀到環境變量 ──────────────────
 load_dotenv()
@@ -356,13 +356,13 @@ async def serve_market_report_alias():
 @app.get("/full-web-heat-analysis")
 @app.get("/heat-analysis")
 async def serve_heat_analysis_page():
-    return _file_response(WEBUI_DIR / "full_web_heat_analysis.html")
+    return _file_response(WEBUI_DIR / "heat_analysis.html")
 
 
 @app.get("/full-web-heat-analysis/trends")
 @app.get("/heat-analysis/trends")
 async def serve_heat_trends_page():
-    return _file_response(WEBUI_DIR / "full_web_heat_trends.html")
+    return _file_response(WEBUI_DIR / "heat_trends.html")
 
 
 @app.get("/api/full-web-heat-analysis/overview")

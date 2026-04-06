@@ -178,13 +178,13 @@ python classifier_tester.py
 | `db_manager.py` | 所有 DB 操作：入庫、查詢、日期解析、backfill |
 | `task_manager.py` | 控制 MediaCrawler 爬蟲，管理爬取順序同入庫邏輯 |
 | `operation_panel.html` | 前端介面，選擇運營商/類別/日期範圍查看活動 |
-| `webui/full_web_heat_analysis.html` | Full-Web Heat Analysis leaderboard 頁面 |
-| `webui/full_web_heat_trends.html` | Full-Web Heat Analysis trend 頁面 |
-| `static/full_web_heat_analysis.js` | Full-Web Heat Analysis 前端邏輯 |
-| `static/full_web_heat_trends.js` | Trend Analysis 前端邏輯 |
-| `static/full_web_heat.css` | Full-Web Heat Analysis / Trend Analysis 共用樣式 |
-| `full_web_heat_adapter.py` | 將 Grad-Project 橋接到 MediaCrawler 熱度分析 backend |
-| `full_web_heat_jobs.py` | `Update Database` 的 weekly background jobs |
+| `webui/heat_analysis.html` | Full-Web Heat Analysis leaderboard 頁面 |
+| `webui/heat_trends.html` | Full-Web Heat Analysis trend 頁面 |
+| `static/heat_analysis.js` | Full-Web Heat Analysis 前端邏輯 |
+| `static/heat_trends.js` | Trend Analysis 前端邏輯 |
+| `static/heat_analysis.css` | Full-Web Heat Analysis / Trend Analysis 共用樣式 |
+| `heat_analysis_adapter.py` | 將 Grad-Project 橋接到 MediaCrawler 熱度分析 backend |
+| `heat_analysis_jobs.py` | `Update Database` 的 weekly background jobs |
 | `start_panel.sh` | 推薦啟動方式，會自動使用 MediaCrawler 的 `.venv` |
 | `macau_analytics.db` | SQLite 資料庫，儲存所有爬取帖文同政府活動數據 |
 | `mediacrawler_patches/` | 修改過的 MediaCrawler 原始檔案，需覆蓋到對應路徑 |

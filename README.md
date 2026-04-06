@@ -4,18 +4,6 @@
 
 ---
 
-## 模組說明
-
-本項目目前有兩條不同的 heat 能力，命名上已刻意區分：
-
-- `heat_analyzer.py` / `heat_leaderboard_v2.html`
-  - 原有的活動級 heat 排行能力
-- `Full-Web Heat Analysis`
-  - 讀取 MediaCrawler 主分析庫的全網 weekly 熱度面板
-  - 詳細說明見 [docs/full_web_heat.md](./docs/full_web_heat.md)
-
----
-
 ## 前置條件
 
 - 已安裝並設定好 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)（XHS / 微博）
