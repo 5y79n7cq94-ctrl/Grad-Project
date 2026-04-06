@@ -960,6 +960,16 @@
         onmouseout="this.style.background='rgba(234,88,12,0.09)'">
         🔥 Heat Leaderboard
       </a>
+      <a id="fullWebHeatLink" href="./full-web-heat-analysis" style="
+        display:inline-flex;align-items:center;gap:5px;
+        padding:6px 14px;border-radius:16px;
+        background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.20);
+        color:#1D4ED8;font-size:12px;font-weight:650;
+        text-decoration:none;white-space:nowrap;transition:.15s;"
+        onmouseover="this.style.background='rgba(37,99,235,0.16)'"
+        onmouseout="this.style.background='rgba(37,99,235,0.08)'">
+        🌐 Full-Web Heat Analysis
+      </a>
             <a id="negativeMonitorLink" href="./negative_monitor.html" style="
         display:inline-flex;align-items:center;gap:5px;
         padding:6px 14px;border-radius:16px;
@@ -1375,6 +1385,8 @@
       if (!q) return;
       const lbLink = document.getElementById('heatLbLink');
       if (lbLink) lbLink.href = './heat_leaderboard_v2.html' + q;
+      const fwLink = document.getElementById('fullWebHeatLink');
+      if (fwLink) fwLink.href = './full-web-heat-analysis' + q;
       const archLink = document.getElementById('archiveNavLink');
       if (archLink) archLink.href = './archived_report.html' + q;
       const nmLink = document.getElementById('negativeMonitorLink');

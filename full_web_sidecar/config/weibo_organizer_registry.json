@@ -1,0 +1,117 @@
+{
+  "galaxy": {
+    "name": "Galaxy Entertainment / 澳门银河",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "澳门银河",
+      "银河综艺馆",
+      "galaxy arena"
+    ],
+    "brand_terms": [
+      "银河"
+    ]
+  },
+  "mgm": {
+    "name": "MGM / 美高梅",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "美狮美高梅",
+      "美高梅剧院",
+      "mgm theater"
+    ],
+    "brand_terms": [
+      "美高梅",
+      "mgm"
+    ]
+  },
+  "melco": {
+    "name": "Melco / 新濠",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "澳门新濠影汇综艺馆",
+      "新濠影汇综艺馆",
+      "澳门新濠影汇",
+      "新濠影汇",
+      "studio city event center"
+    ],
+    "brand_terms": [
+      "新濠",
+      "melco"
+    ]
+  },
+  "sands": {
+    "name": "Sands China / 金沙中国",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "金光综艺馆",
+      "威尼斯人综艺馆",
+      "澳门威尼斯人",
+      "威尼斯人",
+      "澳门巴黎人",
+      "巴黎人",
+      "澳门伦敦人",
+      "伦敦人"
+    ],
+    "brand_terms": [
+      "金沙中国",
+      "sands"
+    ]
+  },
+  "wynn": {
+    "name": "Wynn / 永利",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "永利皇宫",
+      "永利澳门"
+    ],
+    "brand_terms": [
+      "永利",
+      "wynn"
+    ]
+  },
+  "sjm": {
+    "name": "SJM / 澳博",
+    "type": "integrated_resort",
+    "venue_terms": [
+      "澳门上葡京",
+      "上葡京",
+      "grand lisboa palace",
+      "新葡京",
+      "葡京"
+    ],
+    "brand_terms": [
+      "澳博",
+      "sjm"
+    ]
+  },
+  "macau_government": {
+    "name": "Macau Government / 澳门特区政府",
+    "type": "government",
+    "host_terms": [
+      "澳门特区政府",
+      "澳门特别行政区政府",
+      "文化局主办",
+      "旅游局主办",
+      "体育局主办",
+      "招商投资促进局主办",
+      "澳门文化局",
+      "澳门旅游局",
+      "澳门体育局",
+      "澳门招商投资促进局"
+    ],
+    "brand_terms": [
+      "文化局",
+      "旅游局",
+      "体育局",
+      "澳门政府"
+    ]
+  },
+  "other": {
+    "name": "Other / 其他",
+    "type": "other",
+    "host_terms": [],
+    "venue_terms": [],
+    "brand_terms": [],
+    "event_terms": []
+  }
+}

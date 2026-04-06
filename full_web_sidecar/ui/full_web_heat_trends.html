@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Macau Full-Web Trend Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/full-web-assets/full_web_heat.css?v=20260407l" />
+  </head>
+  <body class="report-body">
+    <div class="report-shell">
+      <header class="report-topbar">
+        <div class="brand-block">
+          <div class="brand-logo">TA</div>
+          <div>
+            <p class="eyebrow">Macau Event Intelligence</p>
+            <h1>Full-Web Trend Analysis</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill">
+            <span class="status-dot"></span>
+            <span id="trendDbPathLabel">Loading social media analytics database...</span>
+          </div>
+          <a class="ghost-button-link" id="trendBackToMarketLink" href="/operation_panel.html">Operation Panel</a>
+        </div>
+      </header>
+
+      <main class="report-layout heat-layout">
+        <aside class="filters-column">
+          <section class="glass-panel filter-card heat-control-card">
+            <div class="filter-group">
+              <p class="filter-label">Platform</p>
+              <div class="tab-dropdown">
+                <select id="trendPlatformSelect">
+                  <option value="wb">Weibo</option>
+                  <option value="fb">Facebook</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Analysis Window</p>
+              <div class="tab-dropdown">
+                <select id="trendWindowModeSelect">
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Selected Window</p>
+              <div class="snapshot-card heat-info-card">
+                <span id="trendWindowEyebrow">Current Week</span>
+                <strong id="trendWeekLabel">No imported week yet</strong>
+                <small id="trendWeekSubLabel">Trend analysis is limited to the current weekly snapshot.</small>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <div class="filter-header-row">
+                <p class="filter-label" id="trendSnapshotFilterLabel">Weekly Filter</p>
+                <button class="ghost-button-link control-button mini-control-button" id="openTrendCalendarButton" type="button">
+                  Pick Week
+                </button>
+              </div>
+              <p class="helper-copy weekly-filter-copy" id="trendSnapshotFilterCopy">
+                Fixed Sunday to Saturday windows only. Use this filter to switch between `To Be Updated`, `To Be Analyzed`,
+                and `Completed` weeks.
+              </p>
+              <div class="snapshot-window-list" id="trendSnapshotWindowList"></div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Event</p>
+              <div class="tab-dropdown">
+                <select id="trendEventSelect"></select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Heat Formula</p>
+              <p class="helper-copy">
+                The four cards below are the component indicators used to understand heat. The large heat card is the
+                final combined score.
+              </p>
+            </div>
+          </section>
+        </aside>
+
+        <section class="market-column">
+          <section class="glass-panel trend-page-panel">
+            <div class="panel-busy-overlay hidden" id="trendBusyOverlay" aria-hidden="true">
+              <div class="panel-busy-card">
+                <div class="panel-busy-spinner" aria-hidden="true"></div>
+                <strong id="trendBusyTitle">Data is loading...</strong>
+                <p id="trendBusyDetail">Please wait while the trend charts refresh.</p>
+              </div>
+            </div>
+            <div class="market-header">
+              <div>
+                <h2 class="market-title" id="trendPageTitle">Weekly Trend Analysis</h2>
+                <p class="market-subtitle">
+                  <span id="trendPageSubtitlePrefix">Focus on the current weekly snapshot only.</span> The small indicator cards explain the drivers behind the
+                  final heat score.
+                </p>
+              </div>
+              <div class="page-switcher">
+                <a class="tab-button secondary" id="backToLeaderboardLink" href="/full-web-heat-analysis">Leaderboard</a>
+                <button class="tab-button active" type="button">Trend Analysis</button>
+              </div>
+            </div>
+
+            <div class="trend-summary-shell">
+              <div class="trend-indicator-grid" id="trendIndicatorGrid"></div>
+              <article class="trend-heat-focus-card" id="trendHeatFocusCard"></article>
+            </div>
+
+            <div class="chart-grid compact-chart-grid" id="chartGrid"></div>
+          </section>
+        </section>
+      </main>
+
+      <section class="modal-shell hidden" id="trendCalendarModal" aria-hidden="true">
+        <div class="modal-backdrop" id="trendCalendarBackdrop"></div>
+        <div class="modal-panel">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow" id="trendCalendarEyebrow">Weekly Trend Filter</p>
+              <h2 class="panel-title" id="trendCalendarTitle">Pick Week</h2>
+              <p class="helper-copy" id="trendCalendarHelper">
+                Choose one fixed Sunday to Saturday window for trend analysis. The time selector matches the leaderboard snapshot logic.
+              </p>
+            </div>
+            <button class="ghost-button-link control-button" id="closeTrendCalendarButton" type="button">Close</button>
+          </div>
+
+          <div class="calendar-toolbar hidden" id="trendCalendarToolbar">
+            <div class="calendar-month-label" id="trendCalendarMonthLabel">Available Windows</div>
+          </div>
+
+          <div class="calendar-weekday-row hidden" id="trendCalendarWeekdayRow"></div>
+          <div class="calendar-grid" id="trendCalendarGrid"></div>
+
+          <div class="calendar-footer">
+            <div class="calendar-selection">
+              <strong id="trendCalendarSelectionLabel">No window selected</strong>
+              <p id="trendCalendarSelectionDetail">Choose one snapshot window to refresh trend charts.</p>
+            </div>
+            <div class="calendar-legend" id="trendCalendarLegend"></div>
+            <div class="calendar-actions">
+              <button class="primary-button-link control-button" id="confirmTrendCalendarButton" type="button">Use This Week</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script type="module" src="/full-web-assets/full_web_heat_trends.js?v=20260407l"></script>
+  </body>
+</html>

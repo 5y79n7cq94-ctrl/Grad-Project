@@ -2,6 +2,7 @@ import os, sys, json, uvicorn, re, hashlib, sqlite3, glob, time, math
 import pandas as pd
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from openai import OpenAI
 from collections import defaultdict
 from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH, query_fb_negative_monitor, query_ig_negative_monitor, query_weibo_negative_monitor, query_xhs_negative_monitor
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from fastapi.responses import FileResponse, Response
 import joblib  
+from full_web_sidecar.router import router as full_web_router
 
 # ── 最先 load .env，確保所有 os.getenv() 都能讀到環境變量 ──────────────────
 load_dotenv()
@@ -24,11 +26,19 @@ _crawling_lock = threading.Lock()
 _neg_monitor_crawl_lock = threading.Lock()
 _neg_monitor_crawl_running = False
 BRIDGE_ROOT = Path(__file__).resolve().parent
+FULL_WEB_UI_ROOT = BRIDGE_ROOT / "full_web_sidecar" / "ui"
 
 def _bridge_html_file(filename: str) -> FileResponse:
     p = BRIDGE_ROOT / filename
     if not p.is_file():
         raise HTTPException(status_code=404, detail=f"{filename} not found under {BRIDGE_ROOT}")
+    return FileResponse(p, media_type="text/html; charset=utf-8")
+
+
+def _full_web_ui_file(filename: str) -> FileResponse:
+    p = FULL_WEB_UI_ROOT / filename
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail=f"{filename} not found under {FULL_WEB_UI_ROOT}")
     return FileResponse(p, media_type="text/html; charset=utf-8")
 
 
@@ -282,7 +292,10 @@ def _set_report_insights(from_date: str, to_date: str, keyword: str = "", hot_th
         raise
     finally:
         conn.close()
-backfill_event_dates()
+try:
+    backfill_event_dates()
+except Exception as exc:
+    print(f"⚠️ skipped import-time backfill_event_dates: {exc}")
 app = FastAPI()
 
 # ── Custom CORS middleware：處理本地 HTML file 嘅 null origin ──────────────
@@ -315,6 +328,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.mount("/full-web-assets", StaticFiles(directory=FULL_WEB_UI_ROOT), name="full-web-assets")
+app.include_router(full_web_router)
 
 @app.get("/")
 @app.get("/operation-panel")
@@ -359,6 +374,18 @@ async def bridge_download_report_html():
 @app.get("/operation_panel.html")
 async def bridge_operation_panel_dot_html():
     return _bridge_html_file("operation_panel.html")
+
+
+@app.get("/full-web-heat-analysis")
+@app.get("/full-web-heat-analysis/")
+async def bridge_full_web_heat_analysis():
+    return _full_web_ui_file("full_web_heat_analysis.html")
+
+
+@app.get("/full-web-heat-analysis/trends")
+@app.get("/full-web-heat-analysis/trends/")
+async def bridge_full_web_heat_trends():
+    return _full_web_ui_file("full_web_heat_trends.html")
 
 @app.get("/favicon.ico")
 @app.get("/apple-touch-icon.png")

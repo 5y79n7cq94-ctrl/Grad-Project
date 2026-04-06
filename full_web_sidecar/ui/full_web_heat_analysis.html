@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Macau Full-Web Heat Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/full-web-assets/full_web_heat.css?v=20260407l" />
+  </head>
+  <body class="report-body">
+    <div class="report-shell">
+      <header class="report-topbar">
+        <div class="brand-block">
+          <div class="brand-logo">HA</div>
+          <div>
+            <p class="eyebrow">Macau Event Intelligence</p>
+            <h1>Full-Web Heat Analysis</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill">
+            <span class="status-dot"></span>
+            <span id="heatDbPathLabel">Loading social media analytics database...</span>
+          </div>
+          <button class="primary-button-link control-button" id="updateDatabaseButton" type="button">Update Database</button>
+          <a class="ghost-button-link" id="backToMarketLink" href="/operation_panel.html">Operation Panel</a>
+        </div>
+      </header>
+
+      <main class="report-layout heat-layout">
+        <aside class="filters-column">
+          <section class="glass-panel filter-card heat-control-card">
+            <div class="heat-tab-row">
+              <button class="tab-button active" id="eventTabButton" data-board-type="event" type="button">Event</button>
+              <button class="tab-button secondary" id="topicTabButton" data-board-type="topic" type="button">Topic</button>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Platform</p>
+              <div class="tab-dropdown">
+                <select id="platformSelect">
+                  <option value="wb">Weibo</option>
+                  <option value="fb">Facebook</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Analysis Window</p>
+              <div class="tab-dropdown">
+                <select id="windowModeSelect">
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Active Window</p>
+              <div class="snapshot-card heat-info-card">
+                <span id="activeWindowEyebrow">Current Week</span>
+                <strong id="activeWeekLabel">No imported week yet</strong>
+                <small id="activeWeekSubLabel">All snapshots use a fixed Sunday to Saturday weekly window.</small>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <div class="filter-header-row">
+                <p class="filter-label" id="snapshotFilterLabel">Weekly Filter</p>
+                <button class="ghost-button-link control-button mini-control-button" id="openSnapshotCalendarButton" type="button">
+                  Pick Week
+                </button>
+              </div>
+              <p class="helper-copy weekly-filter-copy" id="snapshotFilterCopy">
+                Fixed Sunday to Saturday windows only. Use this filter to switch between `To Be Updated`, `To Be Analyzed`,
+                and `Completed` weeks.
+              </p>
+              <div class="snapshot-window-list" id="snapshotWindowList"></div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Leaderboard Source</p>
+              <div class="tab-dropdown">
+                <select id="sortMetricSelect">
+                  <option value="heat_score">Heat Score</option>
+                  <option value="post_count">Post Count</option>
+                  <option value="engagement_total">Engagement Count</option>
+                  <option value="discussion_total">Discussion Count</option>
+                  <option value="unique_authors">Unique Authors</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Job Status</p>
+              <div class="status-pill status-pill-wide">
+                <span class="status-dot"></span>
+                <span id="heatJobStatusLabel">Select one platform and weekly snapshot.</span>
+              </div>
+              <p class="helper-copy" id="heatJobDetailLabel">
+                Choose one week or month, then run analysis to rebuild clusters from the Full-Web analytics database.
+              </p>
+              <div class="sidebar-action-row">
+                <button class="primary-button-link control-button" id="sidebarRunAnalysisButton" type="button">Run Analysis</button>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="market-column">
+          <section class="glass-panel heat-page-panel heat-leaderboard-panel">
+            <div class="panel-busy-overlay hidden" id="leaderboardBusyOverlay" aria-hidden="true">
+              <div class="panel-busy-card">
+                <div class="panel-busy-spinner" aria-hidden="true"></div>
+                <strong id="leaderboardBusyTitle">Data is loading...</strong>
+                <p id="leaderboardBusyDetail">Please wait while the leaderboard refreshes.</p>
+              </div>
+            </div>
+            <div class="market-header heat-market-header">
+              <div>
+                <h2 class="market-title" id="leaderboardTitle">Event Leaderboard</h2>
+                <p class="market-subtitle" id="leaderboardSubtitle">
+                  Rank one weekly snapshot by event heat. Switch to topic mode to compare broader discussion signals.
+                </p>
+                <p class="market-subtitle leaderboard-loading-hint hidden" id="leaderboardLoadingHint">
+                  Refreshing the leaderboard for the current filters...
+                </p>
+              </div>
+              <div class="page-switcher">
+                <div class="event-counter heat-counter" id="leaderboardCounter">0 rows</div>
+                <a class="tab-button secondary" id="trendPageLink" href="/full-web-heat-analysis/trends">Trend Analysis</a>
+              </div>
+            </div>
+
+            <div class="overview-grid heat-overview-top-grid" id="heatOverviewGrid"></div>
+
+            <div class="table-frame heat-table-frame">
+              <table class="leaderboard-table heat-leaderboard-table">
+                <thead>
+                  <tr>
+                    <th class="leaderboard-rank-heading">Rank</th>
+                    <th class="heat-title-heading">Title</th>
+                    <th class="leaderboard-metric-heading">Platform</th>
+                    <th class="leaderboard-metric-heading">Posts</th>
+                    <th class="leaderboard-metric-heading">Engagement</th>
+                    <th class="leaderboard-metric-heading">Discussion</th>
+                    <th class="leaderboard-metric-heading">Authors</th>
+                    <th class="heat-score-heading">Heat</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboardTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <section class="modal-shell hidden" id="updateCalendarModal" aria-hidden="true">
+        <div class="modal-backdrop" id="updateCalendarBackdrop"></div>
+        <div class="modal-panel">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow" id="calendarModeEyebrow">Weekly Heat Analysis</p>
+              <h2 class="panel-title" id="calendarModeTitle">Update Database</h2>
+              <p class="helper-copy" id="calendarModeHelper">
+                Choose one fixed Sunday to Saturday window. This update calendar only distinguishes weeks that are still in the future,
+                weeks that still need updating, and weeks that are already updated.
+              </p>
+            </div>
+            <button class="ghost-button-link control-button" id="closeCalendarButton" type="button">Close</button>
+          </div>
+
+          <div class="calendar-toolbar" id="calendarToolbar">
+            <button class="ghost-button-link control-button" id="previousMonthButton" type="button">Previous</button>
+            <div class="calendar-month-label" id="calendarMonthLabel">Month</div>
+            <button class="ghost-button-link control-button" id="nextMonthButton" type="button">Next</button>
+          </div>
+
+          <div class="calendar-weekday-row" id="calendarWeekdayRow"></div>
+          <div class="calendar-grid" id="calendarGrid"></div>
+
+          <div class="calendar-footer">
+            <div class="calendar-selection">
+              <strong id="calendarSelectionLabel">No week selected</strong>
+              <p id="calendarSelectionDetail">Click a blue week to trigger crawling and ingest for that fixed weekly window.</p>
+            </div>
+            <div class="calendar-legend" id="calendarLegend"></div>
+            <div class="calendar-actions">
+              <button class="primary-button-link control-button" id="confirmUpdateButton" type="button">Update This Week</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="cluster-context-menu hidden" id="clusterContextMenu" aria-hidden="true">
+        <button type="button" id="clusterMarkNoiseButton" class="cluster-context-action cluster-context-action-danger">
+          <span class="cluster-context-title">Mark as Noise</span>
+          <small class="cluster-context-subtitle">Hide this cluster from the selected window and remove it from ranking.</small>
+        </button>
+        <button type="button" id="clusterMergeButton" class="cluster-context-action">
+          <span class="cluster-context-title">Merge Into Existing Event</span>
+          <small class="cluster-context-subtitle">Fold this cluster into another event or topic for the current window.</small>
+        </button>
+      </div>
+
+      <section class="modal-shell hidden" id="clusterMergeModal" aria-hidden="true">
+        <div class="modal-backdrop" id="clusterMergeBackdrop"></div>
+        <div class="modal-panel merge-modal-panel">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow">Cluster Feedback</p>
+              <h2 class="panel-title" id="clusterMergeTitle">Merge Cluster</h2>
+              <p class="helper-copy" id="clusterMergeHelper">
+                Choose an existing event to merge this cluster into. The leaderboard will treat them as one event in this selected window.
+              </p>
+            </div>
+            <button class="ghost-button-link control-button" id="closeClusterMergeButton" type="button">Close</button>
+          </div>
+
+          <div class="filter-group">
+            <p class="filter-label" id="clusterMergeSourceHeading">Source Event</p>
+            <div class="snapshot-card heat-info-card">
+              <strong id="clusterMergeSourceLabel">No event selected</strong>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <p class="filter-label" id="clusterMergeTargetHeading">Merge Into</p>
+            <div class="tab-dropdown">
+              <select id="clusterMergeTargetSelect"></select>
+            </div>
+          </div>
+
+          <div class="calendar-actions merge-modal-actions">
+            <button class="ghost-button-link control-button" id="cancelClusterMergeButton" type="button">Cancel</button>
+            <button class="primary-button-link control-button" id="confirmClusterMergeButton" type="button">Apply Merge</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="modal-shell hidden" id="clusterNoiseModal" aria-hidden="true">
+        <div class="modal-backdrop" id="clusterNoiseBackdrop"></div>
+        <div class="modal-panel merge-modal-panel noise-modal-panel">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow">Cluster Feedback</p>
+              <h2 class="panel-title" id="clusterNoiseTitle">Mark as Noise</h2>
+              <p class="helper-copy" id="clusterNoiseHelper">
+                Confirm that this cluster should be treated as noise inside the selected window. It will be removed from the leaderboard and heat calculations for this scope.
+              </p>
+            </div>
+            <button class="ghost-button-link control-button" id="closeClusterNoiseButton" type="button">Close</button>
+          </div>
+
+          <div class="filter-group">
+            <p class="filter-label" id="clusterNoiseSourceHeading">Selected Event</p>
+            <div class="snapshot-card heat-info-card noise-card">
+              <strong id="clusterNoiseSourceLabel">No event selected</strong>
+            </div>
+          </div>
+
+          <div class="calendar-actions merge-modal-actions">
+            <button class="ghost-button-link control-button" id="cancelClusterNoiseButton" type="button">Cancel</button>
+            <button class="primary-button-link control-button danger-button" id="confirmClusterNoiseButton" type="button">Confirm Noise</button>
+          </div>
+        </div>
+      </section>
+
+      <template id="leaderboardEmptyStateTemplate">
+        <tr>
+          <td colspan="8">
+            <div class="empty-state">
+              <h3>No ranking data</h3>
+              <p>The current weekly filters returned no cluster rows.</p>
+            </div>
+          </td>
+        </tr>
+      </template>
+    </div>
+
+    <script type="module" src="/full-web-assets/full_web_heat_analysis.js?v=20260407l"></script>
+  </body>
+</html>
