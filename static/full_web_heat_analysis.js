@@ -20,17 +20,17 @@ const STATUS_META = {
   completed: {
     label: "Completed",
     className: "status-completed",
-    detail: "This weekly snapshot already has analyzed clusters.",
+    detail: "This analysis snapshot already has analyzed clusters.",
   },
   to_be_analyzed: {
     label: "To Be Analyzed",
     className: "status-updated",
-    detail: "Raw posts exist in the database, but weekly clustering still needs to run.",
+    detail: "Raw posts exist in the database, but clustering still needs to run.",
   },
   to_be_updated: {
     label: "To Be Updated",
     className: "status-available",
-    detail: "No raw posts exist for this week yet. Update Database first.",
+    detail: "No raw posts exist for this snapshot yet. Update Database first when applicable.",
   },
   future: {
     label: "Future",
@@ -91,6 +91,7 @@ const CALENDAR_MODE_CONFIG = {
 const state = {
   boardType: "event",
   platform: "wb",
+  windowMode: "weekly",
   sortMetric: "heat_score",
   selectedEvent: "",
   selectedWeek: null,
@@ -114,6 +115,10 @@ const elements = {
   eventTabButton: document.getElementById("eventTabButton"),
   topicTabButton: document.getElementById("topicTabButton"),
   platformSelect: document.getElementById("platformSelect"),
+  windowModeSelect: document.getElementById("windowModeSelect"),
+  activeWindowLabel: document.getElementById("activeWindowLabel"),
+  windowFilterLabel: document.getElementById("windowFilterLabel"),
+  windowFilterHelper: document.getElementById("windowFilterHelper"),
   sortMetricSelect: document.getElementById("sortMetricSelect"),
   activeWeekLabel: document.getElementById("activeWeekLabel"),
   activeWeekSubLabel: document.getElementById("activeWeekSubLabel"),
@@ -178,6 +183,46 @@ function clipText(value, maxLength = 132) {
     return text;
   }
   return `${text.slice(0, maxLength - 1)}...`;
+}
+
+function isMonthlyMode() {
+  return state.windowMode === "monthly";
+}
+
+function formatSelectedWindowLabel(windowItem) {
+  if (!windowItem) {
+    return isMonthlyMode() ? "No month selected" : "No week selected";
+  }
+  if (isMonthlyMode()) {
+    return windowItem.month_key || "No month selected";
+  }
+  return formatWeekLabel(windowItem.week_start, windowItem.week_end);
+}
+
+function syncWindowModeUI() {
+  elements.activeWindowLabel.textContent = isMonthlyMode() ? "Current Month" : "Current Week";
+  elements.windowFilterLabel.textContent = isMonthlyMode() ? "Monthly Filter" : "Weekly Filter";
+  elements.windowFilterHelper.textContent = isMonthlyMode()
+    ? "Monthly analysis uses fixed calendar months. Choose a month below, then run analysis to build monthly clusters."
+    : "Fixed Sunday to Saturday windows only. Use this filter to switch between `To Be Updated`, `To Be Analyzed`, and `Completed` weeks.";
+  elements.openSnapshotCalendarButton.textContent = isMonthlyMode() ? "Monthly Only" : "Pick Week";
+  elements.openSnapshotCalendarButton.disabled = isMonthlyMode();
+  elements.updateDatabaseButton.disabled = isMonthlyMode();
+}
+
+function syncLeaderboardModeUI() {
+  if (state.boardType === "topic") {
+    elements.leaderboardTitle.textContent = "Topic Leaderboard";
+    elements.leaderboardSubtitle.textContent = isMonthlyMode()
+      ? "Select one monthly snapshot on the left, then compare broader discussion topics using the same calendar month."
+      : "Select one weekly snapshot on the left, then compare broader discussion topics using the same weekly window.";
+    return;
+  }
+
+  elements.leaderboardTitle.textContent = "Event Leaderboard";
+  elements.leaderboardSubtitle.textContent = isMonthlyMode()
+    ? "Select one monthly snapshot on the left, then compare event clusters by heat, posts, engagement, discussion, or unique authors."
+    : "Select one weekly snapshot on the left, then compare event clusters by heat, posts, engagement, discussion, or unique authors.";
 }
 
 function getSessionParams() {
@@ -283,7 +328,10 @@ function syncTrendLink() {
   if (state.platform) {
     base.searchParams.set("platform", state.platform);
   }
-  if (state.selectedWeek?.week_start && state.selectedWeek?.week_end) {
+  base.searchParams.set("window_mode", state.windowMode);
+  if (isMonthlyMode() && state.selectedWeek?.month_key) {
+    base.searchParams.set("month_key", state.selectedWeek.month_key);
+  } else if (state.selectedWeek?.week_start && state.selectedWeek?.week_end) {
     base.searchParams.set("week_start", state.selectedWeek.week_start);
     base.searchParams.set("week_end", state.selectedWeek.week_end);
   }
@@ -293,11 +341,11 @@ function syncTrendLink() {
 function setSelectedWeek(week) {
   state.selectedWeek = week || null;
   const statusMeta = getCurrentStatusMeta();
-  elements.activeWeekLabel.textContent = state.selectedWeek
-    ? formatWeekLabel(state.selectedWeek.week_start, state.selectedWeek.week_end)
-    : "No week selected";
+  elements.activeWeekLabel.textContent = formatSelectedWindowLabel(state.selectedWeek);
   if (!state.selectedWeek) {
-    elements.activeWeekSubLabel.textContent = "Choose one weekly snapshot after selecting a platform.";
+    elements.activeWeekSubLabel.textContent = isMonthlyMode()
+      ? "Choose one monthly snapshot after selecting a platform."
+      : "Choose one weekly snapshot after selecting a platform.";
   } else {
     elements.activeWeekSubLabel.textContent = `${statusMeta.label}. ${statusMeta.detail}`;
   }
@@ -307,32 +355,35 @@ function setSelectedWeek(week) {
 
 function updateActionButtons() {
   const status = state.selectedWeek?.status || "";
-  const selectedWeekLabel = state.selectedWeek
-    ? formatWeekLabel(state.selectedWeek.week_start, state.selectedWeek.week_end)
-    : "No week selected";
+  const selectedWeekLabel = formatSelectedWindowLabel(state.selectedWeek);
 
   elements.sidebarRunAnalysisButton.disabled = !state.selectedWeek || status !== "to_be_analyzed";
-  elements.sidebarUpdateWeekButton.disabled = !state.selectedWeek || status !== "to_be_updated";
+  elements.sidebarUpdateWeekButton.disabled = isMonthlyMode() || !state.selectedWeek || status !== "to_be_updated";
 
   if (!state.selectedWeek) {
-    setStatus("Select a week", "Choose one weekly snapshot from the left-side date filter.");
+    setStatus(
+      isMonthlyMode() ? "Select a month" : "Select a week",
+      isMonthlyMode() ? "Choose one monthly snapshot from the left-side filter." : "Choose one weekly snapshot from the left-side date filter."
+    );
     return;
   }
 
   if (status === "completed") {
     setStatus(
       "Completed",
-      `${selectedWeekLabel} already has analyzed ${state.boardType} clusters. You can inspect the leaderboard or switch fixed weekly windows.`
+      `${selectedWeekLabel} already has analyzed ${state.boardType} clusters. You can inspect the leaderboard or switch ${isMonthlyMode() ? "monthly" : "weekly"} snapshots.`
     );
   } else if (status === "to_be_analyzed") {
     setStatus(
       "To Be Analyzed",
-      `${selectedWeekLabel} is already updated in the database. Click Run Analysis to build weekly clusters.`
+      `${selectedWeekLabel} is already updated in the database. Click Run Analysis to build ${isMonthlyMode() ? "monthly" : "weekly"} clusters.`
     );
   } else if (status === "to_be_updated") {
     setStatus(
       "To Be Updated",
-      `${selectedWeekLabel} has no stored raw posts yet. Click Update Database to crawl and ingest this fixed weekly window first.`
+      isMonthlyMode()
+        ? `${selectedWeekLabel} has no raw posts in the analytics database yet. Monthly mode only analyzes months that already contain ingested posts.`
+        : `${selectedWeekLabel} has no stored raw posts yet. Click Update Database to crawl and ingest this fixed weekly window first.`
     );
   }
 }
@@ -355,9 +406,9 @@ function renderOverview(items) {
       sub: getCurrentStatusMeta().detail,
     },
     {
-      label: "Weekly Posts",
+      label: isMonthlyMode() ? "Monthly Posts" : "Weekly Posts",
       value: formatNumber(state.selectedWeek?.post_count || 0),
-      sub: "Raw posts in the selected week",
+      sub: isMonthlyMode() ? "Raw posts in the selected month" : "Raw posts in the selected week",
     },
     {
       label: "Top Title",
@@ -434,7 +485,9 @@ function renderSnapshotWindowList() {
   if (!state.windows.length) {
     const empty = document.createElement("div");
     empty.className = "snapshot-window-empty";
-    empty.textContent = "No weekly windows were found for the selected platform.";
+    empty.textContent = isMonthlyMode()
+      ? "No monthly snapshots were found for the selected platform."
+      : "No weekly windows were found for the selected platform.";
     elements.snapshotWindowList.appendChild(empty);
     return;
   }
@@ -448,10 +501,10 @@ function renderSnapshotWindowList() {
     }`;
     button.innerHTML = `
       <div class="snapshot-window-head">
-        <strong>${item.week_start.slice(5)} to ${item.week_end.slice(5)}</strong>
+        <strong>${isMonthlyMode() ? item.month_key : `${item.week_start.slice(5)} to ${item.week_end.slice(5)}`}</strong>
         <span class="snapshot-status-badge ${statusMeta.className}">${statusMeta.label}</span>
       </div>
-      <p>${formatNumber(item.post_count || 0)} posts · fixed Sunday-Saturday window</p>
+      <p>${formatNumber(item.post_count || 0)} posts · ${isMonthlyMode() ? "fixed calendar month" : "fixed Sunday-Saturday window"}</p>
     `;
     button.addEventListener("click", async () => {
       setSelectedWeek(item);
@@ -613,7 +666,11 @@ function renderCalendar() {
 }
 
 async function loadWindows() {
-  const payload = await requestJson(`/api/full-web-heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&weeks=24`);
+  const payload = await requestJson(
+    `/api/full-web-heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&window_mode=${encodeURIComponent(
+      state.windowMode
+    )}&weeks=24&periods=12`
+  );
   state.windows = payload.items || [];
 
   if (state.selectedWeek) {
@@ -628,7 +685,7 @@ async function loadWindows() {
   if (!state.selectedWeek) {
     const latestCompleted = state.windows.find((item) => item.status === "completed");
     const latestAnalyzable = state.windows.find((item) => item.status === "to_be_analyzed");
-    const latestUpdate = state.windows.find((item) => item.status === "to_be_updated");
+    const latestUpdate = isMonthlyMode() ? null : state.windows.find((item) => item.status === "to_be_updated");
     setSelectedWeek(latestCompleted || latestAnalyzable || latestUpdate || null);
   } else {
     setSelectedWeek(state.selectedWeek);
@@ -663,9 +720,13 @@ async function fetchLeaderboardData() {
   const query = new URLSearchParams({
     platform: state.platform,
     limit: "120",
-    week_start: state.selectedWeek.week_start,
-    week_end: state.selectedWeek.week_end,
   });
+  if (isMonthlyMode() && state.selectedWeek?.month_key) {
+    query.set("month_key", state.selectedWeek.month_key);
+  } else {
+    query.set("week_start", state.selectedWeek.week_start);
+    query.set("week_end", state.selectedWeek.week_end);
+  }
   const endpoint = state.boardType === "topic" ? "/api/full-web-heat-analysis/topic-clusters" : "/api/full-web-heat-analysis/event-clusters";
   const clusterPayload = await requestJson(`${endpoint}?${query.toString()}`);
   const items = sortItems(clusterPayload.items || []);
@@ -702,6 +763,10 @@ async function pollProjectJob(jobId) {
 }
 
 async function startUpdateForSelectedWeek() {
+  if (isMonthlyMode()) {
+    setStatus("Monthly update unsupported", "Use weekly mode for crawling. Monthly mode analyzes already ingested months.");
+    return;
+  }
   const week = state.calendarSelectedWeek || state.selectedWeek;
   if (!week || week.status !== "to_be_updated") {
     return;
@@ -741,15 +806,18 @@ async function runAnalysisForSelectedWeek() {
   const query = new URLSearchParams({
     platform: state.platform,
     replace: "true",
-    week_start: state.selectedWeek.week_start,
-    week_end: state.selectedWeek.week_end,
   });
+  if (isMonthlyMode() && state.selectedWeek?.month_key) {
+    query.set("month_key", state.selectedWeek.month_key);
+  } else {
+    query.set("week_start", state.selectedWeek.week_start);
+    query.set("week_end", state.selectedWeek.week_end);
+  }
 
   setStatus(
     "Running Analysis",
-    `Building ${getBoardTypeLabel().toLowerCase()} clusters for ${PLATFORM_LABELS[state.platform]} ${formatWeekLabel(
-      state.selectedWeek.week_start,
-      state.selectedWeek.week_end
+    `Building ${getBoardTypeLabel().toLowerCase()} clusters for ${PLATFORM_LABELS[state.platform]} ${formatSelectedWindowLabel(
+      state.selectedWeek
     )}.`
   );
   try {
@@ -760,7 +828,7 @@ async function runAnalysisForSelectedWeek() {
       "Analysis completed",
       `${formatNumber(result.event_cluster_rows || 0)} event clusters and ${formatNumber(
         result.topic_cluster_rows || 0
-      )} topic clusters are now ready for this week.`
+      )} topic clusters are now ready for this ${isMonthlyMode() ? "month" : "week"}.`
     );
   } catch (error) {
     setStatus("Analysis failed", error.message);
@@ -774,9 +842,7 @@ function bindEvents() {
     elements.eventTabButton.classList.remove("secondary");
     elements.topicTabButton.classList.remove("active");
     elements.topicTabButton.classList.add("secondary");
-    elements.leaderboardTitle.textContent = "Event Leaderboard";
-    elements.leaderboardSubtitle.textContent =
-      "Select one weekly snapshot on the left, then compare event clusters by heat, posts, engagement, discussion, or unique authors.";
+    syncLeaderboardModeUI();
     await fetchLeaderboardData();
   });
 
@@ -786,15 +852,22 @@ function bindEvents() {
     elements.topicTabButton.classList.remove("secondary");
     elements.eventTabButton.classList.remove("active");
     elements.eventTabButton.classList.add("secondary");
-    elements.leaderboardTitle.textContent = "Topic Leaderboard";
-    elements.leaderboardSubtitle.textContent =
-      "Select one weekly snapshot on the left, then compare broader discussion topics using the same weekly window.";
+    syncLeaderboardModeUI();
     await fetchLeaderboardData();
   });
 
   elements.platformSelect.addEventListener("change", async (event) => {
     state.platform = event.target.value || "wb";
     state.selectedWeek = null;
+    await loadWindows();
+    await fetchLeaderboardData();
+  });
+
+  elements.windowModeSelect.addEventListener("change", async (event) => {
+    state.windowMode = event.target.value || "weekly";
+    state.selectedWeek = null;
+    syncWindowModeUI();
+    syncLeaderboardModeUI();
     await loadWindows();
     await fetchLeaderboardData();
   });
@@ -835,10 +908,20 @@ async function bootstrap() {
   syncSessionLinks();
   const url = new URL(window.location.href);
   state.platform = url.searchParams.get("platform") || "wb";
+  state.windowMode = url.searchParams.get("window_mode") || (url.searchParams.get("month_key") ? "monthly" : "weekly");
   elements.platformSelect.value = state.platform;
+  elements.windowModeSelect.value = state.windowMode;
+  syncWindowModeUI();
+  syncLeaderboardModeUI();
   bindEvents();
   await loadWindows();
-  if (url.searchParams.get("week_start") && url.searchParams.get("week_end")) {
+  if (state.windowMode === "monthly" && url.searchParams.get("month_key")) {
+    const matched = state.windows.find((item) => item.month_key === url.searchParams.get("month_key"));
+    if (matched) {
+      setSelectedWeek(matched);
+      renderSnapshotWindowList();
+    }
+  } else if (url.searchParams.get("week_start") && url.searchParams.get("week_end")) {
     const matched = state.windows.find(
       (item) =>
         item.week_start === url.searchParams.get("week_start") &&

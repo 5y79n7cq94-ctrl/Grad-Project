@@ -5,8 +5,8 @@
 - `Market Report`
   - 原有官方帳號活動監察與 AI 摘要面板
 - `Full-Web Heat Analysis`
-  - 你的 `wb + fb` weekly 全網熱度分析面板
-  - 支援 Sunday-to-Saturday snapshot、`Run Analysis`、Leaderboard 與 Trend Analysis
+  - 你的 `wb + fb` weekly / monthly 全網熱度分析面板
+  - 支援 Sunday-to-Saturday weekly snapshot、calendar-month monthly snapshot、`Run Analysis`、Leaderboard 與 Trend Analysis
 
 ## 現在的交接方式
 
@@ -117,10 +117,10 @@ export PROJECT_ANALYTICS_DB_PATH=/absolute/path/to/social_media_analytics.db
 
 ## 目前已自包含的能力
 
-- Full-Web weekly windows
+- Full-Web weekly / monthly windows
 - `To Be Updated / To Be Analyzed / Completed / Future` 狀態
 - Event / Topic leaderboard
-- Weekly trend analysis
+- Weekly / monthly trend analysis
 - `Run Analysis`
 
 ## 目前仍然需要額外配置的部分

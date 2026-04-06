@@ -39,6 +39,7 @@ BRIDGE_ROOT = Path(__file__).resolve().parent
 WEBUI_DIR = BRIDGE_ROOT / "webui"
 STATIC_DIR = BRIDGE_ROOT / "static"
 HEAT_ANALYSIS_WEEK_FLOOR = os.getenv("HEAT_ANALYSIS_WEEK_FLOOR", "2026-03-01").strip()
+HEAT_ANALYSIS_MONTH_FLOOR = os.getenv("HEAT_ANALYSIS_MONTH_FLOOR", "2026-03").strip()
 
 def _bridge_html_file(filename: str) -> FileResponse:
     p = BRIDGE_ROOT / filename
@@ -389,17 +390,25 @@ async def get_heat_overview(platform: str = "wb", auto_sync: bool = False):
 
 @app.get("/api/full-web-heat-analysis/analysis-windows")
 @app.get("/api/heat-analysis/analysis-windows")
-async def get_heat_analysis_windows(platform: str = "wb", weeks: int = 24):
+async def get_heat_analysis_windows(platform: str = "wb", weeks: int = 24, window_mode: str = "weekly", periods: int = 12):
     try:
-        payload = _heat_service().list_analysis_windows(platform=platform, weeks=weeks)
+        payload = _heat_service().list_analysis_windows(
+            platform=platform,
+            weeks=weeks,
+            window_mode=window_mode,
+            periods=periods,
+        )
         items = payload.get("items", [])
-        if HEAT_ANALYSIS_WEEK_FLOOR:
+        if window_mode == "monthly" and HEAT_ANALYSIS_MONTH_FLOOR:
+            items = [item for item in items if str(item.get("month_key") or "") >= HEAT_ANALYSIS_MONTH_FLOOR]
+        elif HEAT_ANALYSIS_WEEK_FLOOR:
             items = [item for item in items if str(item.get("week_start") or "") >= HEAT_ANALYSIS_WEEK_FLOOR]
         return {
             **payload,
             "items": items,
             "total": len(items),
             "week_floor": HEAT_ANALYSIS_WEEK_FLOOR,
+            "month_floor": HEAT_ANALYSIS_MONTH_FLOOR,
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -415,6 +424,7 @@ async def get_heat_event_clusters(
     offset: int = 0,
     week_start: str = "",
     week_end: str = "",
+    month_key: str = "",
 ):
     try:
         return _heat_service().list_event_clusters(
@@ -425,6 +435,7 @@ async def get_heat_event_clusters(
             offset=offset,
             week_start=week_start,
             week_end=week_end,
+            month_key=month_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -440,6 +451,7 @@ async def get_heat_topic_clusters(
     offset: int = 0,
     week_start: str = "",
     week_end: str = "",
+    month_key: str = "",
 ):
     try:
         return _heat_service().list_topic_clusters(
@@ -450,6 +462,7 @@ async def get_heat_topic_clusters(
             offset=offset,
             week_start=week_start,
             week_end=week_end,
+            month_key=month_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -465,6 +478,7 @@ async def get_heat_event_trend(
     end_date: str = "",
     week_start: str = "",
     week_end: str = "",
+    month_key: str = "",
 ):
     try:
         return _heat_service().get_event_discussion_trend(
@@ -475,6 +489,7 @@ async def get_heat_event_trend(
             end_date=end_date,
             week_start=week_start,
             week_end=week_end,
+            month_key=month_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -488,8 +503,16 @@ async def run_heat_analysis(
     replace: bool = True,
     week_start: str = "",
     week_end: str = "",
+    month_key: str = "",
 ):
     try:
+        if month_key:
+            return _heat_service().extract_events_monthly(
+                platform=platform,
+                month_key=month_key,
+                status=status,
+                replace=replace,
+            )
         if week_start or week_end:
             return _heat_service().extract_events_weekly(
                 platform=platform,

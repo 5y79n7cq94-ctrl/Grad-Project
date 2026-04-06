@@ -11,7 +11,7 @@
 - `heat_analyzer.py` / `heat_leaderboard_v2.html`
   - 原有的活動級 heat 排行能力
 - `Full-Web Heat Analysis`
-  - 使用獨立的 `social_media_analytics.db` 做 weekly 全網熱度面板
+  - 使用獨立的 `social_media_analytics.db` 做 weekly / monthly 全網熱度面板
   - Full-Web 後端程式已內嵌在 `Grad-Project`，不再依賴外部 `project_analytics.py`
   - 詳細說明見 [docs/full_web_heat.md](./docs/full_web_heat.md)
 

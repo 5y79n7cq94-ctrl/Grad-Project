@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
@@ -414,6 +415,21 @@ class ProjectAnalyticsService:
                     UNIQUE(platform, week_start, week_end)
                 );
 
+                CREATE TABLE IF NOT EXISTS analysis_months (
+                    platform TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    month_start TEXT NOT NULL,
+                    month_end TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'completed',
+                    source_ready_posts INTEGER DEFAULT 0,
+                    extracted_post_rows INTEGER DEFAULT 0,
+                    event_cluster_rows INTEGER DEFAULT 0,
+                    topic_cluster_rows INTEGER DEFAULT 0,
+                    extracted_at TEXT NOT NULL,
+                    note TEXT DEFAULT '',
+                    UNIQUE(platform, month_key)
+                );
+
                 CREATE TABLE IF NOT EXISTS weekly_event_extracted_posts (
                     platform TEXT NOT NULL,
                     week_start TEXT NOT NULL,
@@ -471,6 +487,64 @@ class ProjectAnalyticsService:
                 CREATE INDEX IF NOT EXISTS idx_weekly_event_extracted_posts_window
                 ON weekly_event_extracted_posts(platform, week_start, week_end, published_ts DESC);
 
+                CREATE TABLE IF NOT EXISTS monthly_event_extracted_posts (
+                    platform TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    month_start TEXT NOT NULL,
+                    month_end TEXT NOT NULL,
+                    source_post_id TEXT NOT NULL,
+                    author_name TEXT DEFAULT '',
+                    published_at TEXT DEFAULT '',
+                    published_ts INTEGER DEFAULT 0,
+                    note_url TEXT DEFAULT '',
+                    clean_content TEXT DEFAULT '',
+                    analysis_content TEXT DEFAULT '',
+                    hashtags TEXT DEFAULT '[]',
+                    mentions TEXT DEFAULT '[]',
+                    source_keywords TEXT DEFAULT '[]',
+                    topic_seed_terms TEXT DEFAULT '[]',
+                    relevance_flags TEXT DEFAULT '{}',
+                    source_file TEXT NOT NULL,
+                    raw_json TEXT NOT NULL,
+                    post_type TEXT DEFAULT '',
+                    raw_event_candidate TEXT DEFAULT '',
+                    canonical_event_name TEXT DEFAULT '',
+                    event_eligible INTEGER DEFAULT 0,
+                    event_promoted INTEGER DEFAULT 0,
+                    event_confidence REAL DEFAULT 0,
+                    event_geo_score REAL DEFAULT 0,
+                    event_leaf_name TEXT DEFAULT '',
+                    event_parent_name TEXT DEFAULT '',
+                    event_key TEXT DEFAULT '',
+                    event_family_key TEXT DEFAULT '',
+                    organizer_key TEXT DEFAULT '',
+                    organizer_name TEXT DEFAULT '',
+                    organizer_type TEXT DEFAULT '',
+                    organizer_confidence REAL DEFAULT 0,
+                    organizer_evidence TEXT DEFAULT '[]',
+                    primary_topic TEXT DEFAULT '',
+                    dashboard_category TEXT DEFAULT '',
+                    quality_weight REAL DEFAULT 1,
+                    engagement_total INTEGER DEFAULT 0,
+                    discussion_total INTEGER DEFAULT 0,
+                    comment_fetch_count INTEGER DEFAULT 0,
+                    comment_fetch_like_sum INTEGER DEFAULT 0,
+                    comment_fetch_sub_comment_sum INTEGER DEFAULT 0,
+                    comment_unique_authors INTEGER DEFAULT 0,
+                    top_comments TEXT DEFAULT '[]',
+                    post_heat REAL DEFAULT 0,
+                    base_engagement REAL DEFAULT 0,
+                    discussion_strength REAL DEFAULT 0,
+                    comment_value REAL DEFAULT 0,
+                    recency_factor REAL DEFAULT 0,
+                    raw_score REAL DEFAULT 0,
+                    extracted_at TEXT NOT NULL,
+                    UNIQUE(platform, month_key, source_post_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_monthly_event_extracted_posts_window
+                ON monthly_event_extracted_posts(platform, month_key, published_ts DESC);
+
                 CREATE TABLE IF NOT EXISTS weekly_event_clusters (
                     platform TEXT NOT NULL,
                     week_start TEXT NOT NULL,
@@ -507,6 +581,43 @@ class ProjectAnalyticsService:
                 CREATE INDEX IF NOT EXISTS idx_weekly_event_clusters_heat
                 ON weekly_event_clusters(platform, week_start, week_end, heat_score DESC, cluster_key ASC);
 
+                CREATE TABLE IF NOT EXISTS monthly_event_clusters (
+                    platform TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    month_start TEXT NOT NULL,
+                    month_end TEXT NOT NULL,
+                    cluster_key TEXT NOT NULL,
+                    cluster_type TEXT NOT NULL DEFAULT 'event_key',
+                    post_count INTEGER DEFAULT 0,
+                    unique_authors INTEGER DEFAULT 0,
+                    post_type_breakdown TEXT DEFAULT '{}',
+                    total_like_count INTEGER DEFAULT 0,
+                    total_comment_count INTEGER DEFAULT 0,
+                    total_share_count INTEGER DEFAULT 0,
+                    total_engagement INTEGER DEFAULT 0,
+                    discussion_total INTEGER DEFAULT 0,
+                    keywords TEXT DEFAULT '[]',
+                    top_posts TEXT DEFAULT '[]',
+                    top_comments TEXT DEFAULT '[]',
+                    organizer_key TEXT DEFAULT '',
+                    organizer_name TEXT DEFAULT '',
+                    organizer_type TEXT DEFAULT '',
+                    organizer_breakdown TEXT DEFAULT '{}',
+                    organizer_evidence TEXT DEFAULT '[]',
+                    dashboard_category TEXT DEFAULT '',
+                    dashboard_category_score REAL DEFAULT 0,
+                    engagement_component REAL DEFAULT 0,
+                    discussion_component REAL DEFAULT 0,
+                    diversity_component REAL DEFAULT 0,
+                    velocity_component REAL DEFAULT 0,
+                    heat_score REAL DEFAULT 0,
+                    extracted_at TEXT NOT NULL,
+                    UNIQUE(platform, month_key, cluster_key)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_monthly_event_clusters_heat
+                ON monthly_event_clusters(platform, month_key, heat_score DESC, cluster_key ASC);
+
                 CREATE TABLE IF NOT EXISTS weekly_topic_clusters (
                     platform TEXT NOT NULL,
                     week_start TEXT NOT NULL,
@@ -542,6 +653,43 @@ class ProjectAnalyticsService:
 
                 CREATE INDEX IF NOT EXISTS idx_weekly_topic_clusters_heat
                 ON weekly_topic_clusters(platform, week_start, week_end, heat_score DESC, cluster_key ASC);
+
+                CREATE TABLE IF NOT EXISTS monthly_topic_clusters (
+                    platform TEXT NOT NULL,
+                    month_key TEXT NOT NULL,
+                    month_start TEXT NOT NULL,
+                    month_end TEXT NOT NULL,
+                    cluster_key TEXT NOT NULL,
+                    cluster_type TEXT NOT NULL DEFAULT 'primary_topic',
+                    post_count INTEGER DEFAULT 0,
+                    unique_authors INTEGER DEFAULT 0,
+                    post_type_breakdown TEXT DEFAULT '{}',
+                    total_like_count INTEGER DEFAULT 0,
+                    total_comment_count INTEGER DEFAULT 0,
+                    total_share_count INTEGER DEFAULT 0,
+                    total_engagement INTEGER DEFAULT 0,
+                    discussion_total INTEGER DEFAULT 0,
+                    keywords TEXT DEFAULT '[]',
+                    top_posts TEXT DEFAULT '[]',
+                    top_comments TEXT DEFAULT '[]',
+                    organizer_key TEXT DEFAULT '',
+                    organizer_name TEXT DEFAULT '',
+                    organizer_type TEXT DEFAULT '',
+                    organizer_breakdown TEXT DEFAULT '{}',
+                    organizer_evidence TEXT DEFAULT '[]',
+                    dashboard_category TEXT DEFAULT '',
+                    dashboard_category_score REAL DEFAULT 0,
+                    engagement_component REAL DEFAULT 0,
+                    discussion_component REAL DEFAULT 0,
+                    diversity_component REAL DEFAULT 0,
+                    velocity_component REAL DEFAULT 0,
+                    heat_score REAL DEFAULT 0,
+                    extracted_at TEXT NOT NULL,
+                    UNIQUE(platform, month_key, cluster_key)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_monthly_topic_clusters_heat
+                ON monthly_topic_clusters(platform, month_key, heat_score DESC, cluster_key ASC);
                 """
             )
             self._ensure_column(conn, "social_posts", "clean_content", "TEXT DEFAULT ''")
@@ -2136,11 +2284,221 @@ class ProjectAnalyticsService:
             "extracted_at": extracted_at,
         }
 
-    def list_analysis_windows(self, platform: str, *, weeks: int = 12) -> dict[str, Any]:
+    def extract_events_monthly(
+        self,
+        *,
+        platform: str,
+        month_key: str,
+        status: str = "ready",
+        replace: bool = True,
+    ) -> dict[str, Any]:
+        self.ensure_schema()
+        normalized_platform = self._normalize_platform_filter(platform)
+        if not normalized_platform:
+            raise ValueError("platform is required for monthly analysis.")
+
+        month_key, month_start, month_end = self._resolve_month_window(month_key)
+
+        with self._connect() as conn:
+            ready_rows = self._load_event_ready_rows(
+                conn=conn,
+                platform=normalized_platform,
+                status=status,
+                week_start=month_start,
+                week_end=month_end,
+            )
+            outputs = self._build_event_extraction_outputs(ready_rows)
+            extracted_at = self._now_iso()
+
+            if replace:
+                conn.execute(
+                    """
+                    DELETE FROM monthly_event_extracted_posts
+                    WHERE platform = ? AND month_key = ?
+                    """,
+                    (normalized_platform, month_key),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM monthly_event_clusters
+                    WHERE platform = ? AND month_key = ?
+                    """,
+                    (normalized_platform, month_key),
+                )
+                conn.execute(
+                    """
+                    DELETE FROM monthly_topic_clusters
+                    WHERE platform = ? AND month_key = ?
+                    """,
+                    (normalized_platform, month_key),
+                )
+
+            event_post_rows = self._build_event_post_rows(outputs["posts"], extracted_at=extracted_at)
+            monthly_event_post_rows = self._build_monthly_event_post_rows(
+                event_post_rows,
+                month_key=month_key,
+                month_start=month_start,
+                month_end=month_end,
+            )
+            if monthly_event_post_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO monthly_event_extracted_posts (
+                        platform, month_key, month_start, month_end, source_post_id, author_name, published_at, published_ts,
+                        note_url, clean_content, analysis_content, hashtags, mentions, source_keywords,
+                        topic_seed_terms, relevance_flags, source_file, raw_json, post_type, raw_event_candidate,
+                        canonical_event_name, event_eligible, event_promoted, event_confidence, event_geo_score,
+                        event_leaf_name, event_parent_name, event_key, event_family_key, organizer_key,
+                        organizer_name, organizer_type, organizer_confidence, organizer_evidence, primary_topic,
+                        dashboard_category, quality_weight, engagement_total, discussion_total, comment_fetch_count,
+                        comment_fetch_like_sum, comment_fetch_sub_comment_sum, comment_unique_authors, top_comments,
+                        post_heat, base_engagement, discussion_strength, comment_value, recency_factor, raw_score,
+                        extracted_at
+                    ) VALUES (
+                        :platform, :month_key, :month_start, :month_end, :source_post_id, :author_name, :published_at, :published_ts,
+                        :note_url, :clean_content, :analysis_content, :hashtags, :mentions, :source_keywords,
+                        :topic_seed_terms, :relevance_flags, :source_file, :raw_json, :post_type, :raw_event_candidate,
+                        :canonical_event_name, :event_eligible, :event_promoted, :event_confidence, :event_geo_score,
+                        :event_leaf_name, :event_parent_name, :event_key, :event_family_key, :organizer_key,
+                        :organizer_name, :organizer_type, :organizer_confidence, :organizer_evidence, :primary_topic,
+                        :dashboard_category, :quality_weight, :engagement_total, :discussion_total, :comment_fetch_count,
+                        :comment_fetch_like_sum, :comment_fetch_sub_comment_sum, :comment_unique_authors, :top_comments,
+                        :post_heat, :base_engagement, :discussion_strength, :comment_value, :recency_factor, :raw_score,
+                        :extracted_at
+                    )
+                    """,
+                    monthly_event_post_rows,
+                )
+
+            event_cluster_rows = self._build_event_cluster_rows(
+                platform=normalized_platform,
+                clusters=outputs["event_clusters"],
+                extracted_at=extracted_at,
+            )
+            monthly_event_cluster_rows = self._build_monthly_cluster_rows(
+                event_cluster_rows,
+                month_key=month_key,
+                month_start=month_start,
+                month_end=month_end,
+            )
+            if monthly_event_cluster_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO monthly_event_clusters (
+                        platform, month_key, month_start, month_end, cluster_key, cluster_type, post_count, unique_authors,
+                        post_type_breakdown, total_like_count, total_comment_count, total_share_count,
+                        total_engagement, discussion_total, keywords, top_posts, top_comments, organizer_key,
+                        organizer_name, organizer_type, organizer_breakdown, organizer_evidence, dashboard_category,
+                        dashboard_category_score, engagement_component, discussion_component, diversity_component,
+                        velocity_component, heat_score, extracted_at
+                    ) VALUES (
+                        :platform, :month_key, :month_start, :month_end, :cluster_key, :cluster_type, :post_count, :unique_authors,
+                        :post_type_breakdown, :total_like_count, :total_comment_count, :total_share_count,
+                        :total_engagement, :discussion_total, :keywords, :top_posts, :top_comments, :organizer_key,
+                        :organizer_name, :organizer_type, :organizer_breakdown, :organizer_evidence, :dashboard_category,
+                        :dashboard_category_score, :engagement_component, :discussion_component, :diversity_component,
+                        :velocity_component, :heat_score, :extracted_at
+                    )
+                    """,
+                    monthly_event_cluster_rows,
+                )
+
+            topic_cluster_rows = self._build_topic_cluster_rows(
+                platform=normalized_platform,
+                clusters=outputs["topic_clusters"],
+                extracted_at=extracted_at,
+            )
+            monthly_topic_cluster_rows = self._build_monthly_cluster_rows(
+                topic_cluster_rows,
+                month_key=month_key,
+                month_start=month_start,
+                month_end=month_end,
+            )
+            if monthly_topic_cluster_rows:
+                conn.executemany(
+                    """
+                    INSERT INTO monthly_topic_clusters (
+                        platform, month_key, month_start, month_end, cluster_key, cluster_type, post_count, unique_authors,
+                        post_type_breakdown, total_like_count, total_comment_count, total_share_count,
+                        total_engagement, discussion_total, keywords, top_posts, top_comments, organizer_key,
+                        organizer_name, organizer_type, organizer_breakdown, organizer_evidence, dashboard_category,
+                        dashboard_category_score, engagement_component, discussion_component, diversity_component,
+                        velocity_component, heat_score, extracted_at
+                    ) VALUES (
+                        :platform, :month_key, :month_start, :month_end, :cluster_key, :cluster_type, :post_count, :unique_authors,
+                        :post_type_breakdown, :total_like_count, :total_comment_count, :total_share_count,
+                        :total_engagement, :discussion_total, :keywords, :top_posts, :top_comments, :organizer_key,
+                        :organizer_name, :organizer_type, :organizer_breakdown, :organizer_evidence, :dashboard_category,
+                        :dashboard_category_score, :engagement_component, :discussion_component, :diversity_component,
+                        :velocity_component, :heat_score, :extracted_at
+                    )
+                    """,
+                    monthly_topic_cluster_rows,
+                )
+
+            conn.execute(
+                """
+                INSERT INTO analysis_months (
+                    platform, month_key, month_start, month_end, status, source_ready_posts, extracted_post_rows,
+                    event_cluster_rows, topic_cluster_rows, extracted_at, note
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(platform, month_key) DO UPDATE SET
+                    month_start = excluded.month_start,
+                    month_end = excluded.month_end,
+                    status = excluded.status,
+                    source_ready_posts = excluded.source_ready_posts,
+                    extracted_post_rows = excluded.extracted_post_rows,
+                    event_cluster_rows = excluded.event_cluster_rows,
+                    topic_cluster_rows = excluded.topic_cluster_rows,
+                    extracted_at = excluded.extracted_at,
+                    note = excluded.note
+                """,
+                (
+                    normalized_platform,
+                    month_key,
+                    month_start,
+                    month_end,
+                    "completed" if ready_rows else "to_be_updated",
+                    len(ready_rows),
+                    len(monthly_event_post_rows),
+                    len(monthly_event_cluster_rows),
+                    len(monthly_topic_cluster_rows),
+                    extracted_at,
+                    "Monthly analysis completed." if ready_rows else "No ready posts were found in this monthly window.",
+                ),
+            )
+
+        return {
+            "db_path": str(self.db_path),
+            "platform": normalized_platform,
+            "month_key": month_key,
+            "month_start": month_start,
+            "month_end": month_end,
+            "source_ready_posts": len(ready_rows),
+            "extracted_post_rows": len(monthly_event_post_rows),
+            "event_cluster_rows": len(monthly_event_cluster_rows),
+            "topic_cluster_rows": len(monthly_topic_cluster_rows),
+            "extracted_at": extracted_at,
+        }
+
+    def list_analysis_windows(
+        self,
+        platform: str,
+        *,
+        weeks: int = 12,
+        window_mode: str = "weekly",
+        periods: int = 12,
+    ) -> dict[str, Any]:
         self.ensure_schema()
         normalized_platform = self._normalize_platform_filter(platform)
         if not normalized_platform:
             raise ValueError("platform is required.")
+
+        normalized_window_mode = str(window_mode or "weekly").strip().lower()
+        if normalized_window_mode == "monthly":
+            return self._list_monthly_analysis_windows(normalized_platform, periods=periods)
+        if normalized_window_mode != "weekly":
+            raise ValueError("window_mode must be either 'weekly' or 'monthly'.")
 
         safe_weeks = max(1, min(int(weeks), 52))
         with self._connect() as conn:
@@ -2242,6 +2600,84 @@ class ProjectAnalyticsService:
 
         return {"platform": normalized_platform, "items": items, "weeks": safe_weeks}
 
+    def _list_monthly_analysis_windows(self, platform: str, *, periods: int = 12) -> dict[str, Any]:
+        safe_periods = max(1, min(int(periods), 24))
+        with self._connect() as conn:
+            max_day_row = conn.execute(
+                """
+                SELECT MAX(substr(published_at, 1, 10)) AS end_date
+                FROM social_posts
+                WHERE platform = ?
+                """,
+                (platform,),
+            ).fetchone()
+            min_day_row = conn.execute(
+                """
+                SELECT MIN(substr(published_at, 1, 10)) AS start_date
+                FROM social_posts
+                WHERE platform = ?
+                """,
+                (platform,),
+            ).fetchone()
+            recorded_rows = conn.execute(
+                """
+                SELECT platform, month_key, month_start, month_end, status, source_ready_posts,
+                       extracted_post_rows, event_cluster_rows, topic_cluster_rows, extracted_at, note
+                FROM analysis_months
+                WHERE platform = ?
+                ORDER BY month_key DESC
+                """,
+                (platform,),
+            ).fetchall()
+
+        max_day = max_day_row["end_date"] if max_day_row else None
+        min_day = min_day_row["start_date"] if min_day_row else None
+        if not max_day:
+            return {"platform": platform, "window_mode": "monthly", "items": [], "periods": safe_periods}
+
+        latest_day = datetime.fromisoformat(max_day).date()
+        latest_month_start = latest_day.replace(day=1)
+        earliest_day = datetime.fromisoformat(min_day).date() if min_day else latest_month_start
+        recorded = {row["month_key"]: dict(row) for row in recorded_rows}
+
+        items: list[dict[str, Any]] = []
+        cursor = latest_month_start
+        for _ in range(safe_periods):
+            month_key = cursor.strftime("%Y-%m")
+            _, month_start, month_end = self._resolve_month_window(month_key)
+            if datetime.fromisoformat(month_end).date() < earliest_day:
+                break
+            row = recorded.get(month_key)
+            post_count = self._count_posts_in_window(platform=platform, week_start=month_start, week_end=month_end)
+            inferred_extracted_count = self._count_monthly_extracted_posts(platform=platform, month_key=month_key)
+            inferred_event_cluster_rows = self._count_monthly_event_clusters(platform=platform, month_key=month_key)
+            inferred_topic_cluster_rows = self._count_monthly_topic_clusters(platform=platform, month_key=month_key)
+            has_completed_snapshot = bool(row) or self._has_monthly_snapshot(platform=platform, month_key=month_key)
+            status_value = "completed" if has_completed_snapshot else ("to_be_analyzed" if post_count > 0 else "to_be_updated")
+            items.append(
+                {
+                    "platform": platform,
+                    "window_mode": "monthly",
+                    "month_key": month_key,
+                    "month_start": month_start,
+                    "month_end": month_end,
+                    "status": status_value,
+                    "post_count": post_count,
+                    "source_ready_posts": int((row or {}).get("source_ready_posts", 0) or 0),
+                    "extracted_post_rows": int((row or {}).get("extracted_post_rows", inferred_extracted_count) or 0),
+                    "event_cluster_rows": int((row or {}).get("event_cluster_rows", inferred_event_cluster_rows) or 0),
+                    "topic_cluster_rows": int((row or {}).get("topic_cluster_rows", inferred_topic_cluster_rows) or 0),
+                    "extracted_at": (row or {}).get("extracted_at", self._latest_monthly_extracted_at(platform=platform, month_key=month_key)),
+                    "note": (row or {}).get("note", ""),
+                }
+            )
+            if cursor.month == 1:
+                cursor = cursor.replace(year=cursor.year - 1, month=12)
+            else:
+                cursor = cursor.replace(month=cursor.month - 1)
+
+        return {"platform": platform, "window_mode": "monthly", "items": items, "periods": safe_periods}
+
     def list_event_clusters(
         self,
         platform: Optional[str] = "wb",
@@ -2251,18 +2687,26 @@ class ProjectAnalyticsService:
         offset: int = 0,
         week_start: str = "",
         week_end: str = "",
+        month_key: str = "",
     ) -> dict[str, Any]:
         self.ensure_schema()
         safe_limit = max(1, min(limit, 100))
         safe_offset = max(offset, 0)
+        monthly_mode = bool(month_key)
         weekly_mode = bool(week_start or week_end)
+        if monthly_mode and weekly_mode:
+            raise ValueError("Choose either a weekly window or a monthly window, not both.")
+        if monthly_mode:
+            month_key, _, _ = self._resolve_month_window(month_key)
         if weekly_mode:
             self._validate_week_window(week_start=week_start, week_end=week_end)
 
         clauses = []
         params: list[Any] = []
         normalized_platform = self._normalize_platform_filter(platform)
-        if weekly_mode and normalized_platform:
+        if monthly_mode and normalized_platform:
+            self._ensure_monthly_snapshot_materialized(platform=normalized_platform, month_key=month_key)
+        elif weekly_mode and normalized_platform:
             self._ensure_weekly_snapshot_materialized(
                 platform=normalized_platform,
                 week_start=week_start,
@@ -2279,12 +2723,15 @@ class ProjectAnalyticsService:
             clauses.append("(cluster_key LIKE ? OR keywords LIKE ? OR organizer_name LIKE ?)")
             keyword = f"%{q}%"
             params.extend([keyword, keyword, keyword])
-        if weekly_mode:
+        if monthly_mode:
+            clauses.append("month_key = ?")
+            params.append(month_key)
+        elif weekly_mode:
             clauses.append("week_start = ?")
             clauses.append("week_end = ?")
             params.extend([week_start, week_end])
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        table_name = "weekly_event_clusters" if weekly_mode else "event_clusters"
+        table_name = "monthly_event_clusters" if monthly_mode else ("weekly_event_clusters" if weekly_mode else "event_clusters")
 
         with self._connect() as conn:
             total = conn.execute(
@@ -2322,6 +2769,7 @@ class ProjectAnalyticsService:
             "dashboard_category": normalized_dashboard_category,
             "week_start": week_start,
             "week_end": week_end,
+            "month_key": month_key,
             "total": total,
             "limit": safe_limit,
             "offset": safe_offset,
@@ -2337,18 +2785,26 @@ class ProjectAnalyticsService:
         offset: int = 0,
         week_start: str = "",
         week_end: str = "",
+        month_key: str = "",
     ) -> dict[str, Any]:
         self.ensure_schema()
         safe_limit = max(1, min(limit, 100))
         safe_offset = max(offset, 0)
+        monthly_mode = bool(month_key)
         weekly_mode = bool(week_start or week_end)
+        if monthly_mode and weekly_mode:
+            raise ValueError("Choose either a weekly window or a monthly window, not both.")
+        if monthly_mode:
+            month_key, _, _ = self._resolve_month_window(month_key)
         if weekly_mode:
             self._validate_week_window(week_start=week_start, week_end=week_end)
 
         clauses = []
         params: list[Any] = []
         normalized_platform = self._normalize_platform_filter(platform)
-        if weekly_mode and normalized_platform:
+        if monthly_mode and normalized_platform:
+            self._ensure_monthly_snapshot_materialized(platform=normalized_platform, month_key=month_key)
+        elif weekly_mode and normalized_platform:
             self._ensure_weekly_snapshot_materialized(
                 platform=normalized_platform,
                 week_start=week_start,
@@ -2365,12 +2821,15 @@ class ProjectAnalyticsService:
             clauses.append("(cluster_key LIKE ? OR keywords LIKE ? OR organizer_name LIKE ?)")
             keyword = f"%{q}%"
             params.extend([keyword, keyword, keyword])
-        if weekly_mode:
+        if monthly_mode:
+            clauses.append("month_key = ?")
+            params.append(month_key)
+        elif weekly_mode:
             clauses.append("week_start = ?")
             clauses.append("week_end = ?")
             params.extend([week_start, week_end])
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        table_name = "weekly_topic_clusters" if weekly_mode else "topic_clusters"
+        table_name = "monthly_topic_clusters" if monthly_mode else ("weekly_topic_clusters" if weekly_mode else "topic_clusters")
 
         with self._connect() as conn:
             total = conn.execute(
@@ -2408,6 +2867,7 @@ class ProjectAnalyticsService:
             "dashboard_category": normalized_dashboard_category,
             "week_start": week_start,
             "week_end": week_end,
+            "month_key": month_key,
             "total": total,
             "limit": safe_limit,
             "offset": safe_offset,
@@ -2423,14 +2883,26 @@ class ProjectAnalyticsService:
         end_date: str = "",
         week_start: str = "",
         week_end: str = "",
+        month_key: str = "",
     ) -> dict[str, Any]:
         self.ensure_schema()
         normalized_platform = self._normalize_platform_filter(platform) or "wb"
         normalized_event_family_key = str(event_family_key or "").strip()
         if not normalized_event_family_key:
             raise ValueError("event_family_key is required.")
+        monthly_mode = bool(month_key)
         weekly_mode = bool(week_start or week_end)
-        if weekly_mode:
+        if monthly_mode and weekly_mode:
+            raise ValueError("Choose either a weekly window or a monthly window, not both.")
+        if monthly_mode:
+            month_key, month_start, month_end = self._resolve_month_window(month_key)
+            start_date = month_start
+            end_date = month_end
+            self._ensure_monthly_snapshot_materialized(
+                platform=normalized_platform,
+                month_key=month_key,
+            )
+        elif weekly_mode:
             self._validate_week_window(week_start=week_start, week_end=week_end)
             start_date = week_start
             end_date = week_end
@@ -2481,23 +2953,25 @@ class ProjectAnalyticsService:
             summary_row = conn.execute(
                 f"""
                 SELECT cluster_key, dashboard_category, heat_score, total_engagement, discussion_total, post_count, unique_authors
-                FROM {"weekly_event_clusters" if weekly_mode else "event_clusters"}
+                FROM {"monthly_event_clusters" if monthly_mode else ("weekly_event_clusters" if weekly_mode else "event_clusters")}
                 WHERE platform = ? AND cluster_key = ?
-                  {"AND week_start = ? AND week_end = ?" if weekly_mode else ""}
+                  {"AND month_key = ?" if monthly_mode else ("AND week_start = ? AND week_end = ?" if weekly_mode else "")}
                 """,
-                (normalized_platform, normalized_event_family_key, week_start, week_end) if weekly_mode else (normalized_platform, normalized_event_family_key),
+                (normalized_platform, normalized_event_family_key, month_key)
+                if monthly_mode
+                else ((normalized_platform, normalized_event_family_key, week_start, week_end) if weekly_mode else (normalized_platform, normalized_event_family_key)),
             ).fetchone()
             rows = conn.execute(
                 f"""
                 SELECT published_ts, discussion_total, engagement_total, author_name
-                FROM {"weekly_event_extracted_posts" if weekly_mode else "event_extracted_posts"}
+                FROM {"monthly_event_extracted_posts" if monthly_mode else ("weekly_event_extracted_posts" if weekly_mode else "event_extracted_posts")}
                 WHERE platform = ?
                   AND event_promoted = 1
                   AND (
                     event_family_key = ?
                     OR (event_family_key = '' AND event_key = ?)
                   )
-                  {"AND week_start = ? AND week_end = ?" if weekly_mode else ""}
+                  {"AND month_key = ?" if monthly_mode else ("AND week_start = ? AND week_end = ?" if weekly_mode else "")}
                   AND published_ts > 0
                 ORDER BY published_ts ASC
                 """,
@@ -2505,12 +2979,21 @@ class ProjectAnalyticsService:
                     normalized_platform,
                     normalized_event_family_key,
                     normalized_event_family_key,
-                    week_start,
-                    week_end,
-                ) if weekly_mode else (
-                    normalized_platform,
-                    normalized_event_family_key,
-                    normalized_event_family_key,
+                    month_key,
+                )
+                if monthly_mode
+                else (
+                    (
+                        normalized_platform,
+                        normalized_event_family_key,
+                        normalized_event_family_key,
+                        week_start,
+                        week_end,
+                    ) if weekly_mode else (
+                        normalized_platform,
+                        normalized_event_family_key,
+                        normalized_event_family_key,
+                    )
                 ),
             ).fetchall()
 
@@ -2562,6 +3045,7 @@ class ProjectAnalyticsService:
             "days": safe_days,
             "start_date": start_day.isoformat(),
             "end_date": end_day.isoformat(),
+            "month_key": month_key,
             "series": series,
             "metrics": metrics,
             "summary": {
@@ -2603,6 +3087,40 @@ class ProjectAnalyticsService:
             row | {
                 "week_start": week_start,
                 "week_end": week_end,
+            }
+            for row in rows
+        ]
+
+    def _build_monthly_event_post_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        month_key: str,
+        month_start: str,
+        month_end: str,
+    ) -> list[dict[str, Any]]:
+        return [
+            row | {
+                "month_key": month_key,
+                "month_start": month_start,
+                "month_end": month_end,
+            }
+            for row in rows
+        ]
+
+    def _build_monthly_cluster_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        month_key: str,
+        month_start: str,
+        month_end: str,
+    ) -> list[dict[str, Any]]:
+        return [
+            row | {
+                "month_key": month_key,
+                "month_start": month_start,
+                "month_end": month_end,
             }
             for row in rows
         ]
@@ -2673,6 +3191,26 @@ class ProjectAnalyticsService:
             ).fetchone()
         return bool(row and ((row["post_count"] or 0) > 0 or (row["event_count"] or 0) > 0 or (row["topic_count"] or 0) > 0))
 
+    def _has_monthly_snapshot(self, *, platform: str, month_key: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM monthly_event_extracted_posts WHERE platform = ? AND month_key = ?) AS post_count,
+                    (SELECT COUNT(*) FROM monthly_event_clusters WHERE platform = ? AND month_key = ?) AS event_count,
+                    (SELECT COUNT(*) FROM monthly_topic_clusters WHERE platform = ? AND month_key = ?) AS topic_count
+                """,
+                (
+                    platform,
+                    month_key,
+                    platform,
+                    month_key,
+                    platform,
+                    month_key,
+                ),
+            ).fetchone()
+        return bool(row and ((row["post_count"] or 0) > 0 or (row["event_count"] or 0) > 0 or (row["topic_count"] or 0) > 0))
+
     def _ensure_weekly_snapshot_materialized(self, *, platform: str, week_start: str, week_end: str) -> None:
         if self._has_weekly_snapshot(platform=platform, week_start=week_start, week_end=week_end):
             return
@@ -2682,6 +3220,19 @@ class ProjectAnalyticsService:
             platform=platform,
             week_start=week_start,
             week_end=week_end,
+            status="ready",
+            replace=True,
+        )
+
+    def _ensure_monthly_snapshot_materialized(self, *, platform: str, month_key: str) -> None:
+        if self._has_monthly_snapshot(platform=platform, month_key=month_key):
+            return
+        month_key, month_start, month_end = self._resolve_month_window(month_key)
+        if self._count_ready_posts_in_window(platform=platform, week_start=month_start, week_end=month_end) <= 0:
+            return
+        self.extract_events_monthly(
+            platform=platform,
+            month_key=month_key,
             status="ready",
             replace=True,
         )
@@ -2734,6 +3285,54 @@ class ProjectAnalyticsService:
             ).fetchone()
         return str(row["extracted_at"] or "") if row else ""
 
+    def _count_monthly_extracted_posts(self, *, platform: str, month_key: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM monthly_event_extracted_posts
+                WHERE platform = ? AND month_key = ?
+                """,
+                (platform, month_key),
+            ).fetchone()
+        return int(row["count"] or 0) if row else 0
+
+    def _count_monthly_event_clusters(self, *, platform: str, month_key: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM monthly_event_clusters
+                WHERE platform = ? AND month_key = ?
+                """,
+                (platform, month_key),
+            ).fetchone()
+        return int(row["count"] or 0) if row else 0
+
+    def _count_monthly_topic_clusters(self, *, platform: str, month_key: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM monthly_topic_clusters
+                WHERE platform = ? AND month_key = ?
+                """,
+                (platform, month_key),
+            ).fetchone()
+        return int(row["count"] or 0) if row else 0
+
+    def _latest_monthly_extracted_at(self, *, platform: str, month_key: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(extracted_at) AS extracted_at
+                FROM monthly_event_extracted_posts
+                WHERE platform = ? AND month_key = ?
+                """,
+                (platform, month_key),
+            ).fetchone()
+        return str(row["extracted_at"] or "") if row else ""
+
     def _validate_week_window(self, *, week_start: str, week_end: str) -> None:
         if not week_start or not week_end:
             raise ValueError("week_start and week_end are required.")
@@ -2745,6 +3344,19 @@ class ProjectAnalyticsService:
             raise ValueError("week_end must be a Saturday.")
         if end_day - start_day != timedelta(days=6):
             raise ValueError("Week windows must span Sunday through Saturday.")
+
+    def _resolve_month_window(self, month_key: str) -> tuple[str, str, str]:
+        normalized = str(month_key or "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}", normalized):
+            raise ValueError("month_key must use YYYY-MM format.")
+        year = int(normalized[:4])
+        month = int(normalized[5:7])
+        if month < 1 or month > 12:
+            raise ValueError("month_key must use a valid month.")
+        last_day = monthrange(year, month)[1]
+        month_start = f"{year:04d}-{month:02d}-01"
+        month_end = f"{year:04d}-{month:02d}-{last_day:02d}"
+        return normalized, month_start, month_end
 
     def _load_event_ready_rows(
         self,

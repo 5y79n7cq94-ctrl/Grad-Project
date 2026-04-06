@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/full_web_heat.css?v=20260406a" />
+    <link rel="stylesheet" href="/static/full_web_heat.css?v=20260407a" />
   </head>
   <body class="report-body">
     <div class="report-shell">
@@ -52,22 +52,32 @@
             </div>
 
             <div class="filter-group">
+              <p class="filter-label">Analysis Window</p>
+              <div class="tab-dropdown">
+                <select id="windowModeSelect">
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
               <p class="filter-label">Active Snapshot</p>
               <div class="snapshot-card heat-info-card">
-                <span>Current Week</span>
+                <span id="activeWindowLabel">Current Week</span>
                 <strong id="activeWeekLabel">No imported week yet</strong>
-                <small id="activeWeekSubLabel">All snapshots use a fixed Sunday to Saturday weekly window.</small>
+                <small id="activeWeekSubLabel">All snapshots use fixed weekly or monthly windows.</small>
               </div>
             </div>
 
             <div class="filter-group">
               <div class="filter-header-row">
-                <p class="filter-label">Weekly Filter</p>
+                <p class="filter-label" id="windowFilterLabel">Weekly Filter</p>
                 <button class="ghost-button-link control-button mini-control-button" id="openSnapshotCalendarButton" type="button">
                   Pick Week
                 </button>
               </div>
-              <p class="helper-copy weekly-filter-copy">
+              <p class="helper-copy weekly-filter-copy" id="windowFilterHelper">
                 Fixed Sunday to Saturday windows only. Use this filter to switch between `To Be Updated`, `To Be Analyzed`,
                 and `Completed` weeks.
               </p>
@@ -91,10 +101,10 @@
               <p class="filter-label">Job Status</p>
               <div class="status-pill status-pill-wide">
                 <span class="status-dot"></span>
-                <span id="heatJobStatusLabel">Select one platform and weekly snapshot.</span>
+                <span id="heatJobStatusLabel">Select one platform and analysis snapshot.</span>
               </div>
               <p class="helper-copy" id="heatJobDetailLabel">
-                Choose one week, then run analysis to rebuild weekly clusters from the main analytics database.
+                Choose one snapshot, then run analysis to rebuild leaderboard clusters from the main analytics database.
               </p>
               <div class="sidebar-action-row">
                 <button class="ghost-button-link control-button" id="sidebarUpdateWeekButton" type="button">Update Database</button>
@@ -110,7 +120,7 @@
               <div>
                 <h2 class="market-title" id="leaderboardTitle">Event Leaderboard</h2>
                 <p class="market-subtitle" id="leaderboardSubtitle">
-                  Rank one weekly snapshot by event heat. Switch to topic mode to compare broader discussion signals.
+                  Rank one selected snapshot by event heat. Switch to topic mode to compare broader discussion signals.
                 </p>
               </div>
               <div class="page-switcher">
@@ -184,13 +194,13 @@
           <td colspan="8">
             <div class="empty-state">
               <h3>No ranking data</h3>
-              <p>The current weekly filters returned no cluster rows.</p>
+              <p>The current analysis filters returned no cluster rows.</p>
             </div>
           </td>
         </tr>
       </template>
     </div>
 
-    <script type="module" src="/static/full_web_heat_analysis.js?v=20260406a"></script>
+    <script type="module" src="/static/full_web_heat_analysis.js?v=20260407a"></script>
   </body>
 </html>
