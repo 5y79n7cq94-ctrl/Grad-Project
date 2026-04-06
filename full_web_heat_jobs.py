@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from heat_analysis_adapter import get_mediacrawler_root, get_project_analytics_service_class
+from full_web_heat_adapter import get_mediacrawler_root, get_project_analytics_service_class
 
 
 def _now_iso() -> str:
@@ -162,4 +162,3 @@ def build_update_command(*, platform: str, week_start: str, week_end: str, db_pa
 
 
 heat_job_manager = HeatJobManager()
-
