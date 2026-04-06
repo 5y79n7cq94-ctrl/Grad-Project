@@ -950,14 +950,24 @@
       box-shadow:0 4px 16px rgba(15,23,42,0.05);
       flex-wrap:wrap;">
       <span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:rgba(15,23,42,0.38);margin-right:4px;">Navigate</span>
-      <a id="heatLbLink" href="/full-web-heat-analysis" style="
+      <a id="officialHeatLink" href="./heat_leaderboard_v2.html" style="
         display:inline-flex;align-items:center;gap:5px;
         padding:6px 14px;border-radius:16px;
-        background:rgba(234,88,12,0.09);border:1px solid rgba(234,88,12,0.20);
+        background:rgba(249,115,22,0.10);border:1px solid rgba(249,115,22,0.22);
         color:#C2410C;font-size:12px;font-weight:650;
         text-decoration:none;white-space:nowrap;transition:.15s;"
-        onmouseover="this.style.background='rgba(234,88,12,0.18)'"
-        onmouseout="this.style.background='rgba(234,88,12,0.09)'">
+        onmouseover="this.style.background='rgba(249,115,22,0.18)'"
+        onmouseout="this.style.background='rgba(249,115,22,0.10)'">
+        🔥 Heat Leaderboard
+      </a>
+      <a id="fullWebHeatLink" href="/full-web-heat-analysis" style="
+        display:inline-flex;align-items:center;gap:5px;
+        padding:6px 14px;border-radius:16px;
+        background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.20);
+        color:#1D4ED8;font-size:12px;font-weight:650;
+        text-decoration:none;white-space:nowrap;transition:.15s;"
+        onmouseover="this.style.background='rgba(37,99,235,0.16)'"
+        onmouseout="this.style.background='rgba(37,99,235,0.08)'">
         🔥 Full-Web Heat Analysis
       </a>
             <a id="negativeMonitorLink" href="./negative_monitor.html" style="
@@ -1373,8 +1383,10 @@
     (function(){
       const q = window.location.search || '';
       if (!q) return;
-      const lbLink = document.getElementById('heatLbLink');
-      if (lbLink) lbLink.href = '/full-web-heat-analysis' + q;
+      const officialHeatLink = document.getElementById('officialHeatLink');
+      if (officialHeatLink) officialHeatLink.href = './heat_leaderboard_v2.html' + q;
+      const fullWebHeatLink = document.getElementById('fullWebHeatLink');
+      if (fullWebHeatLink) fullWebHeatLink.href = '/full-web-heat-analysis' + q;
       const archLink = document.getElementById('archiveNavLink');
       if (archLink) archLink.href = './archived_report.html' + q;
       const nmLink = document.getElementById('negativeMonitorLink');
