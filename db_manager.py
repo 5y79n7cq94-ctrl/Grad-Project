@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 宜家呢行就百分之百讀到你份 .env 入面寫嘅 DB_PATH 喇
-DB_PATH = os.environ.get("DB_PATH", os.path.join(_BASE_DIR, "macau_analytics.db"))
+# 優先讀主項目用嘅 MACAU_ANALYTICS_DB_PATH，再 fallback 到原本 DB_PATH
+DB_PATH = os.environ.get("MACAU_ANALYTICS_DB_PATH") or os.environ.get("DB_PATH", os.path.join(_BASE_DIR, "macau_analytics.db"))
 
 CRAWL_EXPIRY_DAYS = 7  # operator+category 超過幾日先重新爬
 

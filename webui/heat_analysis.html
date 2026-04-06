@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Macau Full-Web Heat Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/heat_analysis.css?v=20260405j" />
+  </head>
+  <body class="report-body">
+    <div class="report-shell">
+      <header class="report-topbar">
+        <div class="brand-block">
+          <div class="brand-logo">HA</div>
+          <div>
+            <p class="eyebrow">Macau Event Intelligence</p>
+            <h1>Full-Web Heat Analysis</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill">
+            <span class="status-dot"></span>
+            <span id="heatDbPathLabel">Loading social media analytics database...</span>
+          </div>
+          <button class="primary-button-link control-button" id="updateDatabaseButton" type="button">Update Database</button>
+          <a class="ghost-button-link" href="/project">Market Report</a>
+        </div>
+      </header>
+
+      <main class="report-layout heat-layout">
+        <aside class="filters-column">
+          <section class="glass-panel filter-card heat-control-card">
+            <div class="heat-tab-row">
+              <button class="tab-button active" id="eventTabButton" data-board-type="event" type="button">Event</button>
+              <button class="tab-button secondary" id="topicTabButton" data-board-type="topic" type="button">Topic</button>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Platform</p>
+              <div class="tab-dropdown">
+                <select id="platformSelect">
+                  <option value="">All Platforms</option>
+                  <option value="wb">Weibo</option>
+                  <option value="fb">Facebook</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Active Snapshot</p>
+              <div class="snapshot-card heat-info-card">
+                <span>Current Week</span>
+                <strong id="activeWeekLabel">No imported week yet</strong>
+                <small id="activeWeekSubLabel">All snapshots use a fixed Sunday to Saturday weekly window.</small>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <div class="filter-header-row">
+                <p class="filter-label">Weekly Filter</p>
+                <button class="ghost-button-link control-button mini-control-button" id="openSnapshotCalendarButton" type="button">
+                  Pick Week
+                </button>
+              </div>
+              <p class="helper-copy weekly-filter-copy">
+                Fixed Sunday to Saturday windows only. Use this filter to switch between `To Be Updated`, `To Be Analyzed`,
+                and `Completed` weeks.
+              </p>
+              <div class="snapshot-window-list" id="snapshotWindowList"></div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Leaderboard Source</p>
+              <div class="tab-dropdown">
+                <select id="sortMetricSelect">
+                  <option value="heat_score">Heat Score</option>
+                  <option value="post_count">Post Count</option>
+                  <option value="engagement_total">Engagement Count</option>
+                  <option value="discussion_total">Discussion Count</option>
+                  <option value="unique_authors">Unique Authors</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <p class="filter-label">Job Status</p>
+              <div class="status-pill status-pill-wide">
+                <span class="status-dot"></span>
+                <span id="heatJobStatusLabel">Select one platform and weekly snapshot.</span>
+              </div>
+              <p class="helper-copy" id="heatJobDetailLabel">
+                Choose one week, then run analysis to rebuild weekly clusters from the main analytics database.
+              </p>
+              <div class="sidebar-action-row">
+                <button class="ghost-button-link control-button" id="sidebarUpdateWeekButton" type="button">Update Database</button>
+                <button class="primary-button-link control-button" id="sidebarRunAnalysisButton" type="button">Run Analysis</button>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="market-column">
+          <section class="glass-panel heat-page-panel heat-leaderboard-panel">
+            <div class="market-header heat-market-header">
+              <div>
+                <h2 class="market-title" id="leaderboardTitle">Event Leaderboard</h2>
+                <p class="market-subtitle" id="leaderboardSubtitle">
+                  Rank one weekly snapshot by event heat. Switch to topic mode to compare broader discussion signals.
+                </p>
+              </div>
+              <div class="page-switcher">
+                <div class="event-counter heat-counter" id="leaderboardCounter">0 rows</div>
+                <a class="tab-button secondary" id="trendPageLink" href="/full-web-heat-analysis/trends">Trend Analysis</a>
+              </div>
+            </div>
+
+            <div class="overview-grid heat-overview-top-grid" id="heatOverviewGrid"></div>
+
+            <div class="table-frame heat-table-frame">
+              <table class="leaderboard-table heat-leaderboard-table">
+                <thead>
+                  <tr>
+                    <th class="leaderboard-rank-heading">Rank</th>
+                    <th class="heat-title-heading">Title</th>
+                    <th class="leaderboard-metric-heading">Platform</th>
+                    <th class="leaderboard-metric-heading">Posts</th>
+                    <th class="leaderboard-metric-heading">Engagement</th>
+                    <th class="leaderboard-metric-heading">Discussion</th>
+                    <th class="leaderboard-metric-heading">Authors</th>
+                    <th class="heat-score-heading">Heat</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboardTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <section class="modal-shell hidden" id="updateCalendarModal" aria-hidden="true">
+        <div class="modal-backdrop" id="updateCalendarBackdrop"></div>
+        <div class="modal-panel">
+          <div class="modal-header">
+            <div>
+              <p class="eyebrow" id="calendarModeEyebrow">Weekly Full-Web Heat Analysis</p>
+              <h2 class="panel-title" id="calendarModeTitle">Update Database</h2>
+              <p class="helper-copy" id="calendarModeHelper">
+                Choose one fixed Sunday to Saturday window. This update calendar only distinguishes weeks that are still in the future,
+                weeks that still need updating, and weeks that are already updated.
+              </p>
+            </div>
+            <button class="ghost-button-link control-button" id="closeCalendarButton" type="button">Close</button>
+          </div>
+
+          <div class="calendar-toolbar">
+            <button class="ghost-button-link control-button" id="previousMonthButton" type="button">Previous</button>
+            <div class="calendar-month-label" id="calendarMonthLabel">Month</div>
+            <button class="ghost-button-link control-button" id="nextMonthButton" type="button">Next</button>
+          </div>
+
+          <div class="calendar-weekday-row" id="calendarWeekdayRow"></div>
+          <div class="calendar-grid" id="calendarGrid"></div>
+
+          <div class="calendar-footer">
+            <div class="calendar-selection">
+              <strong id="calendarSelectionLabel">No week selected</strong>
+              <p id="calendarSelectionDetail">Click a blue week to trigger crawling and ingest for that fixed weekly window.</p>
+            </div>
+            <div class="calendar-legend" id="calendarLegend"></div>
+            <div class="calendar-actions">
+              <button class="primary-button-link control-button" id="confirmUpdateButton" type="button">Update This Week</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <template id="leaderboardEmptyStateTemplate">
+        <tr>
+          <td colspan="8">
+            <div class="empty-state">
+              <h3>No ranking data</h3>
+              <p>The current weekly filters returned no cluster rows.</p>
+            </div>
+          </td>
+        </tr>
+      </template>
+    </div>
+
+    <script type="module" src="/static/heat_analysis.js?v=20260405j"></script>
+  </body>
+</html>
