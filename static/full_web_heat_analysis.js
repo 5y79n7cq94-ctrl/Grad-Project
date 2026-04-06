@@ -1,5 +1,6 @@
 const LEADERBOARD_LIMIT = 40;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const SESSION_QUERY_KEYS = ["first_name", "last_name", "email", "position", "role", "token"];
 
 const CATEGORY_LABELS = {
   entertainment: "Concert / Sport",
@@ -109,6 +110,7 @@ const elements = {
   leaderboardSubtitle: document.getElementById("leaderboardSubtitle"),
   leaderboardCounter: document.getElementById("leaderboardCounter"),
   trendPageLink: document.getElementById("trendPageLink"),
+  marketReportLink: document.getElementById("marketReportLink"),
   eventTabButton: document.getElementById("eventTabButton"),
   topicTabButton: document.getElementById("topicTabButton"),
   platformSelect: document.getElementById("platformSelect"),
@@ -178,6 +180,57 @@ function clipText(value, maxLength = 132) {
   return `${text.slice(0, maxLength - 1)}...`;
 }
 
+function getSessionParams() {
+  const search = new URLSearchParams(window.location.search);
+  const firstName = search.get("first_name");
+  if (!firstName) {
+    return null;
+  }
+  return {
+    first_name: firstName,
+    last_name: search.get("last_name") || "",
+    email: search.get("email") || "",
+    position: search.get("position") || "",
+    role: search.get("role") || "user",
+    token: search.get("token") || "",
+  };
+}
+
+function appendSessionParams(url) {
+  const session = getSessionParams();
+  if (!session) {
+    return url;
+  }
+  SESSION_QUERY_KEYS.forEach((key) => {
+    if (session[key]) {
+      url.searchParams.set(key, session[key]);
+    }
+  });
+  return url;
+}
+
+function enforceSystemSession() {
+  const session = getSessionParams();
+  if (!session) {
+    window.location.href = "/login_page.html";
+    throw new Error("Missing login session. Redirecting to login page.");
+  }
+  if (session.position === "IT Admin") {
+    const adminUrl = new URL("/admin_page.html", window.location.origin);
+    appendSessionParams(adminUrl);
+    window.location.href = `${adminUrl.pathname}${adminUrl.search}`;
+    throw new Error("IT Admin should use the admin page.");
+  }
+  return session;
+}
+
+function syncSessionLinks() {
+  const marketReportUrl = appendSessionParams(new URL("/project", window.location.origin));
+  if (elements.marketReportLink) {
+    elements.marketReportLink.href = `${marketReportUrl.pathname}${marketReportUrl.search}`;
+  }
+}
+
 function formatWeekLabel(weekStart, weekEnd) {
   if (!weekStart || !weekEnd) {
     return "No week selected";
@@ -223,7 +276,7 @@ function sortItems(items) {
 }
 
 function syncTrendLink() {
-  const base = new URL("/full-web-heat-analysis/trends", window.location.origin);
+  const base = appendSessionParams(new URL("/full-web-heat-analysis/trends", window.location.origin));
   if (state.selectedEvent) {
     base.searchParams.set("event", state.selectedEvent);
   }
@@ -778,6 +831,8 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  enforceSystemSession();
+  syncSessionLinks();
   const url = new URL(window.location.href);
   state.platform = url.searchParams.get("platform") || "wb";
   elements.platformSelect.value = state.platform;
