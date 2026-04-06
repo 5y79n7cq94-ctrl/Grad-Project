@@ -3,11 +3,17 @@ import json
 import pandas as pd
 import os
 import datetime
-from pathlib import Path
+import threading as _threading
+from post_normalizer import auto_normalize_new_post, init_post_tables
+import os
+from dotenv import load_dotenv
 
+# 呢行好重要！佢會將 .env 入面嘅嘢倒晒入去系統環境變數度
+load_dotenv() 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = os.getenv("MACAU_ANALYTICS_DB_PATH", str(PROJECT_ROOT / "macau_analytics.db"))
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 優先讀主項目用嘅 MACAU_ANALYTICS_DB_PATH，再 fallback 到原本 DB_PATH
+DB_PATH = os.environ.get("MACAU_ANALYTICS_DB_PATH") or os.environ.get("DB_PATH", os.path.join(_BASE_DIR, "macau_analytics.db"))
 
 CRAWL_EXPIRY_DAYS = 7  # operator+category 超過幾日先重新爬
 
@@ -129,6 +135,7 @@ def ingest_government_data(file_path):
         print(f"❌ 搵唔到檔案: {file_path}")
         return
     conn = get_connection()
+    init_post_tables(conn) 
     df = pd.read_csv(file_path) if file_path.endswith('.csv') else pd.read_excel(file_path)
     cursor = conn.cursor()
     count = 0
@@ -157,6 +164,13 @@ def ingest_government_data(file_path):
               json.dumps(row.to_dict(), ensure_ascii=False)))
         if cursor.rowcount > 0:
             count += 1
+            auto_normalize_new_post(
+                conn, 'government', row,
+                operator=op,
+                event_date=event_date,
+                category=types_str,
+            )
+
     conn.commit()
     conn.close()
     print(f"🚀 政府數據入庫成功：共 {count} 條｜跳過噪音: {skipped_noise} 條")
@@ -185,10 +199,31 @@ def _infer_year(ev_month_str, pub_year, pub_month):
     return pub_year + 1
 
 
+_CN_NUM = {'〇':'0','一':'1','二':'2','三':'3','四':'4','五':'5',
+           '六':'6','七':'7','八':'8','九':'9','十':'10',
+           '十一':'11','十二':'12'}
+
+def _convert_cn_month(text):
+    """將中文月份（三月、十一月等）轉為阿拉伯數字月份"""
+    # 先處理兩位中文月（十一、十二）
+    for cn, ar in [('十二', '12'), ('十一', '11'), ('十', '10')]:
+        text = text.replace(f'{cn}月', f'{ar}月')
+    # 再處理一位中文月（一至九）
+    for cn, ar in [('一','1'),('二','2'),('三','3'),('四','4'),('五','5'),
+                   ('六','6'),('七','7'),('八','8'),('九','9')]:
+        text = re.sub(rf'(?<![十一二三四五六七八九]){cn}月', f'{ar}月', text)
+    return text
+
+
 def _normalise(text):
     text = str(text).replace('\n',' ').replace('\r',' ').replace('\xa0',' ')
+    text = _convert_cn_month(text)                               # ✏️ NEW: 中文月份→阿拉伯
     text = re.sub(r'(\d)\s+([月日年])', r'\1\2', text)
-    text = re.sub(r'([月])\s+(\d)',     r'\1\2', text)
+    text = re.sub(r'([月年])\s+(\d)',   r'\1\2', text)           # ✏️ FIX: 年後空格 (2026年 3月→2026年3月)
+    # ✏️ FIX: 去除日期後嘅星期括號 (3月9日（星期一） → 3月9日)，避免干擾跨月range regex
+    text = re.sub(r'(\d{1,2}月\d{1,2}日)[（(]星期[一二三四五六日天][）)]', r'\1', text)
+    # ✏️ NEW: 統一時間分隔符，去除日期後面的時間部分干擾 (3月3日12:00 → 3月3日)
+    text = re.sub(r'(\d{1,2}月\d{1,2}日)\s*\d{1,2}[時时:點点]\d{0,2}', r'\1', text)
     return text
 
 
@@ -207,11 +242,12 @@ def _shield_ticket_dates(text):
     )
 
 
-def _scan_all_dates(text, pub_year, pub_month):
+def _scan_all_dates(text, pub_year, pub_month, pub_day=None):
     """
     掃描 text，回傳 list of (date_str, is_jiri) tuples，按出現順序排列。
-    is_jiri=True 代表「即日起至」segment（start=today），
+    is_jiri=True 代表「即日起至」segment（start=帖文發佈日），
     is_jiri=False 代表真正的活動日期。
+    pub_day: 帖文發佈日（整數），用於「即日起」嘅精確 start date。
     """
     results   = []   # (pos, date_str, is_jiri)
     used_spans= []
@@ -228,25 +264,40 @@ def _scan_all_dates(text, pub_year, pub_month):
             used_spans.append(span)
 
     # ── 即日起/至 ── 最優先，標記 is_jiri=True ──────────────────
+    def _pub_start():
+        d = pub_day if pub_day and 1 <= pub_day <= 31 else 1
+        return _fmt(pub_year, pub_month, d)
+
     for m in re.finditer(r'即日(?:起至|至|起)\s*(\d{4})年(\d{1,2})月(\d{1,2})日', text):
         end = _fmt(m.group(1), m.group(2), m.group(3))
-        # 儲存 end~end，is_jiri=True 標記係「即日起至」結束日
-        add(f"{end}~{end}", m.span(), is_jiri=True)
+        add(f"{_pub_start()}~{end}", m.span(), is_jiri=True)
 
-    # ✏️ NEW: 即日起至 YYYY年M月（冇日）→ 自動補該月最後一日
     for m in re.finditer(r'即日(?:起至|至|起)\s*(\d{4})年(\d{1,2})月(?!\d*日)', text):
         if overlaps(m.span()): continue
         y, mo = int(m.group(1)), int(m.group(2))
         last_day = calendar.monthrange(y, mo)[1]
         end = _fmt(y, mo, last_day)
-        add(f"{end}~{end}", m.span(), is_jiri=True)
+        add(f"{_pub_start()}~{end}", m.span(), is_jiri=True)
 
     for m in re.finditer(r'即日(?:起至|至|起)\s*(\d{1,2})月(\d{1,2})日', text):
         if overlaps(m.span()): continue
         mo, d = m.group(1), m.group(2)
         y     = _infer_year(mo, pub_year, pub_month)
         end   = _fmt(y, mo, d)
-        add(f"{end}~{end}", m.span(), is_jiri=True)
+        add(f"{_pub_start()}~{end}", m.span(), is_jiri=True)
+
+    # ── ✏️ FIX: YYYY年M月D日起至M月D日 (e.g. 2026年3月6日起至4月5日) ─────────────
+    for m in re.finditer(r'(\d{4})年(\d{1,2})月(\d{1,2})日起至(\d{1,2})月(\d{1,2})日', text):
+        if overlaps(m.span()): continue
+        y,m1,d1,m2,d2 = m.groups()
+        add(f"{_fmt(y,m1,d1)}~{_fmt(y,m2,d2)}", m.span())
+
+    # ── ✏️ FIX: M月D日起至M月D日 無年份 (e.g. 3月6日起至4月5日) ─────────────────
+    for m in re.finditer(r'(?<!\d)(\d{1,2})月(\d{1,2})日起至(\d{1,2})月(\d{1,2})日', text):
+        if overlaps(m.span()): continue
+        m1,d1,m2,d2 = m.groups()
+        y = _infer_year(m1, pub_year, pub_month)
+        add(f"{_fmt(y,m1,d1)}~{_fmt(y,m2,d2)}", m.span())
 
     # ── M月D日起（無「至」）→ 單日開始 ─────────────────────────
     for m in re.finditer(r'(?<!\d)(\d{1,2})月(\d{1,2})日起(?!至)', text):
@@ -258,6 +309,13 @@ def _scan_all_dates(text, pub_year, pub_month):
         add(f"{dt}~{dt}", m.span())
 
     # ── 有年份多日 ────────────────────────────────────────────
+    # ✏️ NEW: YYYY年M月D日 至 YYYY年M月D日（兩邊都有年份，跨月或跨年範圍）
+    for m in re.finditer(
+        r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*[至–\-~到]\s*(\d{4})年(\d{1,2})月(\d{1,2})日', text):
+        if overlaps(m.span()): continue
+        y1,m1,d1,y2,m2,d2 = m.groups()
+        add(f"{_fmt(y1,m1,d1)}~{_fmt(y2,m2,d2)}", m.span())
+
     for m in re.finditer(
         r'(\d{4})年(\d{1,2})月(\d{1,2})日\s*[至–\-~到]\s*(\d{1,2})月(\d{1,2})日', text):
         if overlaps(m.span()): continue
@@ -364,7 +422,73 @@ def _scan_all_dates(text, pub_year, pub_month):
         if 1<=month<=12 and 1<=day<=31:
             add(f"{_fmt(year,month,day)}~{_fmt(year,month,day)}", m.span())
 
+    # ── ✏️ NEW: M.DD-M.DD 無年份點分範圍 (e.g. 3.26-4.19, 2.13-2.23) ────────
+    for m in re.finditer(
+        r'(?<!\d)(\d{1,2})[./](\d{1,2})\s*[-–]\s*(\d{1,2})[./](\d{1,2})(?!\d)', text):
+        if overlaps(m.span()): continue
+        m1,d1,m2,d2 = m.groups()
+        if not (1<=int(m1)<=12 and 1<=int(d1)<=31 and 1<=int(m2)<=12 and 1<=int(d2)<=31): continue
+        y = _infer_year(m1, pub_year, pub_month)
+        add(f"{_fmt(y,m1,d1)}~{_fmt(y,m2,d2)}", m.span())
+
+    # ── ✏️ NEW: M.DD 無年份單日 (e.g. 3.26) ─────────────────────────────────
+    for m in re.finditer(r'(?<!\d)(\d{1,2})[./](\d{2})(?!\d)', text):
+        if overlaps(m.span()): continue
+        mo,d = m.groups()
+        if not (1<=int(mo)<=12 and 1<=int(d)<=31): continue
+        y = _infer_year(mo, pub_year, pub_month)
+        add(f"{_fmt(y,mo,d)}~{_fmt(y,mo,d)}", m.span())
+
+    # ── ✏️ NEW: 單獨 M月（冇日）→ 補全為該月第1日至最後一日 ─────────────────
+    # ✏️ FIX: 排除「月」後緊跟中文字嘅描述性用法（如「5月的澳門」「5月份」「5月初」）
+    # 只保留「月」後接數字、標點、空白、或句末嘅真正日期用法（如「5月」「5月演出」）
+    _LONE_MONTH_NOISE_RE = re.compile(
+        r'[\u4e00-\u9fff]'  # 中文字
+    )
+    for m in re.finditer(r'(?<!\d)(\d{1,2})月(?!\d)', text):
+        if overlaps(m.span()): continue
+        mo = m.group(1)
+        if not (1<=int(mo)<=12): continue
+        # 檢查「月」後一個字符係咪中文——係就係描述性詞語，跳過
+        after = text[m.end():m.end()+1]
+        if after and _LONE_MONTH_NOISE_RE.match(after):
+            continue
+        y    = _infer_year(mo, pub_year, pub_month)
+        last = calendar.monthrange(y, int(mo))[1]
+        add(f"{_fmt(y,mo,1)}~{_fmt(y,mo,last)}", m.span())
+
     results.sort(key=lambda x: x[0])
+
+    # ✏️ FIX: 若同月已有更精確嘅日期，移除整月展開（避免「5月」被展開成 5/1~5/31 蓋過 5/1~5/3）
+    import datetime as _dt2
+    def _is_whole_month(seg):
+        parts = seg.split('~')
+        if len(parts) != 2: return None
+        try:
+            s = _dt2.date.fromisoformat(parts[0].strip())
+            e = _dt2.date.fromisoformat(parts[1].strip())
+            if (s.day == 1 and e.day == calendar.monthrange(s.year, s.month)[1]
+                    and s.month == e.month and s.year == e.year):
+                return (s.year, s.month)
+        except Exception:
+            pass
+        return None
+
+    precise_months = set()
+    for _, seg, _ in results:
+        ym = _is_whole_month(seg)
+        if ym is None:  # 非整月 → 記錄為「有精確日期」
+            parts = seg.split('~')
+            try:
+                s = _dt2.date.fromisoformat(parts[0].strip())
+                precise_months.add((s.year, s.month))
+            except Exception:
+                pass
+
+    filtered = [(pos, seg, jiri) for pos, seg, jiri in results
+                if _is_whole_month(seg) is None or _is_whole_month(seg) not in precise_months]
+    results = filtered
+
     return [(r, j) for _, r, j in results]
 
 
@@ -378,7 +502,7 @@ def extract_event_date(text, default_year=2026, post_publish_dt=None):
     if not text:
         return None
     text      = _normalise(text)
-    pub_year, pub_month, _ = _parse_pub_dt(post_publish_dt, default_year)
+    pub_year, pub_month, pub_date_obj = _parse_pub_dt(post_publish_dt, default_year)
     # 特殊：最先檢查「同月兩段非連續日期」（e.g. 11月14-16及21-23日）
     # _scan_all_dates 識別唔到呢個 pattern，必須喺 early return 之前做
     if re.search(
@@ -399,18 +523,14 @@ def extract_event_date(text, default_year=2026, post_publish_dt=None):
                 return f"{min(_s2).isoformat()}~{max(_e2).isoformat()}"
 
     clean     = _shield_ticket_dates(text)
-    tagged    = _scan_all_dates(clean, pub_year, pub_month)
+    pub_day   = pub_date_obj.day if pub_date_obj else None
+    tagged    = _scan_all_dates(clean, pub_year, pub_month, pub_day)
     if not tagged:
         return None
 
-    # 分開「即日起」同「真實活動日期」
     jiri_dates  = [r for r, j in tagged if j]
     event_dates = [r for r, j in tagged if not j]
 
-
-    # 策略：
-    # 1. 如果有真實活動日期 → 用活動日期計 first~last，再將 jiri 嘅結束日納入 ends
-    # 2. 如果只有 jiri → 直接回傳 jiri 結束日（即日起至X → X~X）
     all_working = event_dates if event_dates else jiri_dates
     if not all_working:
         return None
@@ -427,11 +547,11 @@ def extract_event_date(text, default_year=2026, post_publish_dt=None):
     if not starts:
         return all_working[0]
 
-    # 納入 jiri 結束日（如果有真實活動日期）
     if event_dates and jiri_dates:
         for seg in jiri_dates:
             parts = seg.split('~')
             try:
+                starts.append(datetime.date.fromisoformat(parts[0].strip()))
                 ends.append(datetime.date.fromisoformat(parts[-1].strip()))
             except Exception:
                 pass
@@ -449,7 +569,8 @@ def extract_multi_event_dates(text, default_year=2026, post_publish_dt=None):
     if not text:
         return []
     text      = _normalise(text)
-    pub_year, pub_month, _ = _parse_pub_dt(post_publish_dt, default_year)
+    pub_year, pub_month, pub_date_obj = _parse_pub_dt(post_publish_dt, default_year)
+    pub_day   = pub_date_obj.day if pub_date_obj else None
 
     # 特殊：同月兩段「M月D-D及D-D日」
     seg_results = []
@@ -465,13 +586,76 @@ def extract_multi_event_dates(text, default_year=2026, post_publish_dt=None):
         return seg_results
 
     clean  = _shield_ticket_dates(text)
-    tagged = _scan_all_dates(clean, pub_year, pub_month)
-    return [r for r, _ in tagged]
+    tagged = _scan_all_dates(clean, pub_year, pub_month, pub_day)
+    # ✏️ FIX: dedup完全相同嘅日期段（同一帖文多句提及同一日期會重複）
+    seen = set()
+    deduped = []
+    for r, _ in tagged:
+        if r not in seen:
+            seen.add(r)
+            deduped.append(r)
+    return deduped
 
 
 def extract_all_event_dates(text, default_year=2026, post_publish_dt=None):
     """向下兼容，現用 extract_multi_event_dates 實現"""
     return extract_multi_event_dates(text, default_year, post_publish_dt)
+
+
+def _detect_all_categories(text):
+    """
+    ✏️ NEW: 偵測一段文字包含嘅所有 category，回傳 list。
+    解決一帖多活動只被歸入第一個 category 的問題。
+    """
+    if not text:
+        return []
+    text_upper = str(text).upper()
+
+    CATEGORY_KEYWORDS = {
+        "food":          ["美食","餐廳","餐飲","自助餐","下午茶","食評","RESTAURANT","BUFFET",
+                          "DINING","茶餐廳","扒房","點心","餐厅","餐饮","茶餐厅","晚宴","宴席",
+                          "春茗","酒吧","調酒","雞尾酒","特調","微醺","BAR","COCKTAIL","调酒",
+                          "吃什么","咖啡","食物","喝茶","佳肴","美味","口感","料理","风味","口味",
+                          "一口","年糕","甜度","餐桌","汤","饮品","米其林","地道小食","茶楼","雪糕","酒"],
+        "concert":       ["演唱會","音樂會","FANMEETING","見面會","CONCERT","FANCON","演出","音樂",
+                          "演唱会","音乐会","见面会","巡演","世巡","开唱","抢票","LIVE TOUR","SHOWCASE",
+                          "演出季","音樂劇","歌劇","話劇","舞劇","京劇","粵劇",
+                          "音乐剧","歌剧","话剧","舞剧","京剧","粤剧",
+                          "银河综艺馆","百老汇舞台","歌手","银河票务","门票","伦敦人综艺馆"],
+        "sport":         ["長跑","馬拉松","MARATHON","十公里","10公里","10K","長跑賽","乒乓球",
+                          "马拉松","长跑","UFC","格斗","格蘭披治大賽","FISE",
+                          "高爾夫球賽","高爾夫賽事","高尔夫球赛","高尔夫赛事","乒兵球","选手"],
+        "crossover":     ["聯名","快閃","POP-UP","POPUP","限定","CROSSOVER","泡泡瑪特","POPMART",
+                          "主題展覽","联名","快闪","泡泡玛特","主題快閃","主題餐飲","贝克汉姆"],
+        "entertainment": ["演唱會","音樂會","FANMEETING","見面會","CONCERT","長跑","馬拉松",
+                          "演唱会","音乐会","见面会","马拉松","巡演","世巡"],
+        "exhibition":    ["展覽","展出","藝術展","ART EXHIBITION","EXPO","TEAMLAB","博物館",
+                          "展示館","紀念館","展览","艺术展","艺术","博物馆","展示馆","纪念馆",
+                          "博览","特展","作品展","展品","展区","畫展","藝術","花展"],
+        "experience":    ["常駐","VR","SANDBOX","沉浸式","體驗館","水舞間","主題樂園",
+                          "体验","主题乐园","天浪淘园","星动银河",
+                          "喜剧节","新春市集","贺岁","游戏","spa","健身","水疗","跑步机",
+                          "魔法","魔术","打卡","游乐","乐园","主題音樂匯演"],
+        "accommodation": ["酒店優惠","住宿","套票","HOTEL PACKAGE","酒店","套餐","度假",
+                          "嘉佩乐","套房","客房","早餐","福布斯","瑞吉酒店",
+                          "伦敦人御园","伦敦人酒店","豪华房"],
+        "shopping":      ["購物","折扣","優惠券","购物","优惠券","时尚汇","旗舰店","精品店",
+                          "百货","好物","產品","紀念品","手信","购物中心","消费"],
+        "gaming":        ["博彩","賭場","CASINO","積分兌換","貴賓","博彩","赌场","积分","贵宾"],
+    }
+    CATEGORY_EXCLUDES = {
+        "food": ["演唱會","CONCERT","馬拉松","長跑","MARATHON","10公里","10K","跑賽","賽事攻略",
+                 "演唱会","马拉松","长跑","世界杯","格斗"],
+    }
+
+    found = []
+    for cat, kws in CATEGORY_KEYWORDS.items():
+        excl = CATEGORY_EXCLUDES.get(cat, [])
+        if any(kw.upper() in text_upper for kw in kws):
+            if not any(ex.upper() in text_upper for ex in excl):
+                if cat not in found:
+                    found.append(cat)
+    return found
 
 
 def ingest_crawler_data(json_file, platform, keyword, operator=None,
@@ -480,6 +664,7 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
         print(f"❌ 搵唔到 JSON: {json_file}")
         return
     conn = get_connection()
+    init_post_tables(conn)
     cursor = conn.cursor()
     with open(json_file, 'r', encoding='utf-8') as f:
         posts = json.load(f)
@@ -491,6 +676,7 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
     count = 0
     skipped_old = 0
     skipped_dup = 0
+    new_post_ids = []  # 今次新入庫嘅 post_id，用於觸發後處理
 
     for idx, post in enumerate(posts):
         raw_id  = post.get('note_id') or post.get('id') or post.get('mid') or str(idx)
@@ -541,21 +727,199 @@ def ingest_crawler_data(json_file, platform, keyword, operator=None,
         else:
             event_date = None
 
+        # ✏️ NEW: 偵測帖文包含嘅所有 category，以 | 分隔儲存
+        # 避免一帖多活動只被歸入第一個 category 而漏掉其他
+        detected_categories = _detect_all_categories(combined)
+        category_str = '|'.join(detected_categories) if detected_categories else None
+
         cursor.execute('''
             INSERT OR IGNORE INTO macau_events
-            (id, platform, operator, keyword, title, description, event_date, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, platform, operator, keyword, title, description, event_date, category, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (post_id, platform, op, keyword, title, desc, event_date,
+              category_str,
               json.dumps(post, ensure_ascii=False)))
         if cursor.rowcount > 0:
             count += 1
+            new_post_ids.append(post_id)
+            auto_normalize_new_post(
+                conn, platform, post,
+                operator=op,
+                event_date=event_date,
+                category=category_str,
+            )
 
     conn.commit()
     conn.close()
-    # ✏️ CHANGED: 更詳細的入庫報告
     print(f"📦 {platform.upper()} 入庫成功：{count} 條新帖 | "
           f"跳過舊帖(>{max_age_days}日): {skipped_old} | "
           f"跳過已有: {skipped_dup} | 總帖數: {len(posts)} (Keyword: {keyword})")
+
+    # ── 自動觸發後處理（OCR + 去重），唔阻塞主流程 ──
+    if new_post_ids:
+        _trigger_post_ingest_pipeline(new_post_ids, operator=op)
+
+
+# ── 入庫後自動後處理 ───────────────────────────────────────
+
+import datetime as _dt
+
+# 記錄上次爬蟲月份用嘅 key
+_LAST_CRAWL_MONTH_KEY = "last_crawl_month"
+
+def _promote_last_month_archive():
+    """跨月先做：強制重跑上個月 cache → promote 做 archive"""
+    today = _dt.date.today()
+    
+    # 讀上次爬蟲月份
+    try:
+        conn = get_connection()
+        conn.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)")
+        conn.commit()
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key=?", (_LAST_CRAWL_MONTH_KEY,)
+        ).fetchone()
+        last_month_num = int(row[0]) if row else None
+        conn.close()
+    except Exception:
+        last_month_num = None
+
+    # 同月，唔做
+    if last_month_num == today.month:
+        return
+
+    print(f"📅 [Archive] 跨月偵測，開始 promote 上個月做 archive...")
+
+    # 計算上個月日期範圍
+    first_of_this_month = today.replace(day=1)
+    last_month_end = first_of_this_month - _dt.timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+    from_str = last_month_start.strftime("%Y-%m-%d")
+    to_str = last_month_end.strftime("%Y-%m-%d")
+
+    # 強制刪上個月舊 cache（唔理 is_complete，確保數據係最新）
+    try:
+        import urllib.request as _ur
+        # 先刪
+        conn = get_connection()
+        conn.execute(
+            "DELETE FROM analysis_cache WHERE cache_key LIKE ?",
+            (f"%|{from_str}|{to_str}",)
+        )
+        conn.commit()
+        conn.close()
+
+        # 重跑上個月全部 operator
+        ALL_OPERATORS = ['wynn','sands','galaxy','mgm','melco','sjm','government']
+        for op in ALL_OPERATORS:
+            try:
+                _ur.urlopen(
+                    f"http://127.0.0.1:9038/api/analyze?"
+                    f"operators={op}&from_date={from_str}&to_date={to_str}",
+                    timeout=300  # AI 分析需要時間
+                )
+                print(f"✅ [Archive] {op} 上個月分析完成")
+            except Exception as e:
+                print(f"⚠️  [Archive] {op} 分析失敗: {e}")
+
+        # Promote 做 archive
+        conn = get_connection()
+        conn.execute(
+            "UPDATE analysis_cache SET is_complete=1 WHERE cache_key LIKE ?",
+            (f"%|{from_str}|{to_str}",)
+        )
+        conn.commit()
+        conn.close()
+        print(f"✅ [Archive] {from_str} ~ {to_str} promoted 做 archive")
+
+    except Exception as e:
+        print(f"⚠️  [Archive] promote 失敗: {e}")
+
+    # 更新上次爬蟲月份
+    try:
+        conn = get_connection()
+        conn.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?,?)",
+            (_LAST_CRAWL_MONTH_KEY, str(today.month))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"⚠️  [Archive] 更新 last_crawl_month 失敗: {e}")
+def _post_ingest_pipeline(new_post_ids: list, operator: str = ""):
+    db_path = os.getenv("DB_PATH", "macau_analytics.db")
+    print(f"⚙️  [後處理] 開始處理 {len(new_post_ids)} 條新帖...")
+
+    # Step 1: 圖片 OCR
+    try:
+        from media_analyzer import run as _run_ocr
+        _run_ocr(db_path=db_path, post_ids=new_post_ids)
+    except Exception as e:
+        print(f"⚠️  [後處理] OCR 出錯（唔影響主流程）: {e}")
+
+    # Step 2: 去重 + 更新 events_deduped
+    try:
+        from process_events import run_dedup_pipeline
+        run_dedup_pipeline(db_path=db_path)
+    except Exception as e:
+        print(f"⚠️  [後處理] 去重出錯（唔影響主流程）: {e}")
+
+    print(f"✅ [後處理] 完成")
+
+    # Step 3: 跨月檢查 → promote 上個月做 archive
+    try:
+        _promote_last_month_archive()
+    except Exception as e:
+        print(f"⚠️  [後處理] Archive promote 失敗: {e}")
+
+    # Step 4: Invalidate 當月 cache（is_complete=0 先刪）
+    try:
+        import urllib.request as _ur
+        req = _ur.Request(
+            f"http://127.0.0.1:9038/api/analysis-cache/invalidate?operator={operator}",
+            method="POST"
+        )
+        _ur.urlopen(req, timeout=10)
+        print(f"✅ [後處理] Analysis cache invalidated for operator: {operator or 'all'}")
+    except Exception as e:
+        print(f"⚠️  [後處理] Cache invalidate 失敗（bridge.py 係咪跑緊？）: {e}")
+
+
+def _post_ingest_pipeline_with_lock(new_post_ids: list, operator: str = ""):
+    if not _pipeline_lock.acquire(blocking=False):
+        print(f"⏭️  [後處理] Pipeline 已跑緊，跳過（全量去重會覆蓋）")
+        return
+    try:
+        _post_ingest_pipeline(new_post_ids, operator)
+    finally:
+        _pipeline_lock.release()
+
+
+_pipeline_lock = _threading.Lock()
+
+def _post_ingest_pipeline_with_lock(new_post_ids: list):
+    """帶 lock 嘅 pipeline wrapper，防止多個平台同時觸發重複去重。"""
+    if not _pipeline_lock.acquire(blocking=False):
+        print(f"⏭️  [後處理] Pipeline 已跑緊，跳過（全量去重會覆蓋）")
+        return
+    try:
+        _post_ingest_pipeline(new_post_ids)
+    finally:
+        _pipeline_lock.release()
+
+
+def _trigger_post_ingest_pipeline(new_post_ids: list, operator: str = ""):
+    if not new_post_ids:
+        return
+    t = _threading.Thread(
+        target=_post_ingest_pipeline_with_lock,
+        args=(new_post_ids, operator),
+        daemon=True,
+        name="post-ingest-pipeline",
+    )
+    t.start()
+    print(f"🚀 [後處理] Background thread 已啟動（{len(new_post_ids)} 條新帖）")
 
 
 # ── 查詢 ──────────────────────────────────────────────────
@@ -569,52 +933,92 @@ def query_db_by_keyword(keyword):
     conn.close()
     return df
 
-def query_db_by_filters(keyword, operators, category, max_pub_age_days=180):
+def _expand_trad_simp(keyword):
+    """繁簡互轉，返回所有變體。依賴 trad_simp.py 模組。"""
+    try:
+        from trad_simp import expand_variants
+        return expand_variants(keyword)
+    except ImportError:
+        # Fallback：萬一模組唔存在，直接返回原字
+        return [keyword]
+
+
+def query_db_by_filters(keyword, operators, category, max_pub_age_days=180, from_date=None):
     """
     精確查詢：按 keyword + operator + category 過濾
     用 title/description 關鍵字做 category 匹配，唔再豁免任何 platform
     category 必須係單一字串（由 bridge.py 負責逐個傳入）
 
-    # ✏️ CHANGED: max_pub_age_days — 只查最近 N 日發佈嘅社媒帖文（預設180日）
+    # ✏️ CHANGED: pub_cutoff 改為跟 from_date - 90 日，令查詢範圍更準確
+    # 若冇 from_date，fallback 用 now - max_pub_age_days
     # 政府數據唔受此限制
     """
     conn = get_connection()
     ops_placeholder = ','.join(['?' for _ in operators])
-    # ✏️ CHANGED: 計算社媒帖文發佈截止日期
-    pub_cutoff = (datetime.datetime.now() - datetime.timedelta(days=max_pub_age_days)).strftime('%Y-%m-%d')
+
+    # ✏️ CHANGED: pub_cutoff 跟 from_date - 90 日，唔再死板係 now - 180 日
+    if from_date:
+        try:
+            base = datetime.datetime.strptime(str(from_date)[:10], '%Y-%m-%d')
+            pub_cutoff = (base - datetime.timedelta(days=90)).strftime('%Y-%m-%d')
+        except Exception:
+            pub_cutoff = (datetime.datetime.now() - datetime.timedelta(days=max_pub_age_days)).strftime('%Y-%m-%d')
+    else:
+        pub_cutoff = (datetime.datetime.now() - datetime.timedelta(days=max_pub_age_days)).strftime('%Y-%m-%d')
+    # 換算成毫秒 timestamp 供 XHS 比較
+    pub_cutoff_ms = int(datetime.datetime.strptime(pub_cutoff, '%Y-%m-%d').timestamp() * 1000)
 
     # Category → 必須包含的關鍵字（title OR description）
     CATEGORY_KEYWORDS = {
         "food":          ["美食", "餐廳", "餐飲", "自助餐", "下午茶", "食評", "restaurant", "buffet", "dining", "茶餐廳", "扒房", "點心",
                           "餐厅", "餐饮", "茶餐厅", "美食地图", "自助餐", "下午茶", "晚宴", "宴席", "春茗",
                           # ✏️ 酒吧/調酒
-                          "酒吧", "調酒", "雞尾酒", "特調", "微醺", "bar", "cocktail", "调酒", "鸡尾酒", "特调"],
+                          "酒吧", "調酒", "雞尾酒", "特調", "微醺", "bar", "cocktail", "调酒", "鸡尾酒", "特调",
+                          # ✏️ 新增關鍵字
+                          "吃什么", "咖啡", "食物", "喝茶", "佳肴", "美味", "口感", "料理", "风味", "口味",
+                          "一口", "年糕", "甜度", "餐桌", "汤", "饮品", "米其林", "地道小食", "茶楼", "雪糕", "酒"],
         # ✏️ 移除「售票」「澳門站」「入場須知」(太廣)
         "concert":       ["演唱會", "音樂會", "fanmeeting", "見面會", "concert", "fancon", "演出", "音樂",
                           "演唱会", "音乐会", "见面会", "巡演", "世巡", "开唱", "抢票", "開始售票", "即將開售",
                           "live tour", "live in", "showcase",
                           "演出季", "音樂劇", "歌劇", "話劇", "舞劇", "京劇", "粵劇",
-                          "音乐剧", "歌剧", "话剧", "舞剧", "京剧", "粤剧"],
+                          "音乐剧", "歌剧", "话剧", "舞剧", "京剧", "粤剧",
+                          # ✏️ 新增關鍵字
+                          "银河综艺馆", "百老汇舞台", "歌手", "银河票务", "门票", "伦敦人综艺馆"],
         # ✏️ 移除「游泳」「GT」「賽車」「赛车」「sport」「race」「运动」「體育」(太廣或誤觸)
         # ✏️ 移除「GOLF」「高爾夫」— J.LINDEBERG時裝品牌描述有「高爾夫」主線誤觸
         "sport":         ["長跑", "馬拉松", "運動比賽", "marathon", "十公里", "10公里", "10k", "長跑賽", "乒乓球",
                           "马拉松", "长跑", "ufc", "格斗", "格蘭披治大賽", "格兰披治大赛", "fise",
-                          "高爾夫球賽", "高爾夫賽事", "高尔夫球赛", "高尔夫赛事"],
+                          "高爾夫球賽", "高爾夫賽事", "高尔夫球赛", "高尔夫赛事",
+                          # ✏️ 新增關鍵字
+                          "乒兵球", "选手"],
         # ✏️ 移除「主題展」(動物標本館有「主題展室」)
         "crossover":     ["聯名", "快閃", "pop-up", "popup", "限定", "crossover", "泡泡瑪特", "popmart", "主題展覽",
-                          "联名", "快闪", "泡泡玛特"],
+                          "联名", "快闪", "泡泡玛特",
+                          # ✏️ 新增關鍵字
+                          "主題快閃", "主題餐飲", "贝克汉姆"],
         "entertainment": ["演唱會", "音樂會", "fanmeeting", "見面會", "concert", "長跑", "馬拉松", "marathon", "十公里",
                           "演唱会", "音乐会", "见面会", "马拉松", "巡演", "世巡"],
         # ✏️ 新增「博物館」「博物馆」
         "exhibition":    ["展覽", "展出", "藝術展", "art exhibition", "expo", "teamlab", "博物館", "展示館", "紀念館",
-                          "展览", "艺术展", "艺术", "博物馆", "展示馆", "纪念馆"],
+                          "展览", "艺术展", "艺术", "博物馆", "展示馆", "纪念馆",
+                          # ✏️ 新增關鍵字
+                          "博览", "特展", "作品展", "展品", "展区", "畫展", "藝術", "花展"],
         "experience":    ["常駐", "vr", "sandbox", "沉浸式", "體驗館", "水舞間", "主題樂園",
-                          "沉浸式", "体验", "主题乐园", "天浪淘园", "星动银河"],
-        "accommodation": ["酒店優惠", "住宿", "套票", "hotel package",
-                          "酒店", "住宿", "套餐", "度假"],
+                          "沉浸式", "体验", "主题乐园", "天浪淘园", "星动银河",
+                          # ✏️ 新增關鍵字
+                          "喜剧节", "新春市集", "贺岁", "游戏", "spa", "健身", "水疗", "跑步机",
+                          "魔法", "魔术", "打卡", "游乐", "乐园", "主題音樂匯演"],
+        "accommodation": ["酒店優惠", "住宿套票", "hotel package",
+                          "酒店", "住宿", "套餐", "度假",
+                          # ✏️ 新增關鍵字
+                          "嘉佩乐", "套房", "客房", "早餐", "福布斯", "瑞吉酒店",
+                          "伦敦人御园", "伦敦人酒店", "豪华房"],
         # ✏️ 移除「SALE」「discount」(酒精免責聲明誤觸)、「商場」「优惠」(太廣)
         "shopping":      ["購物", "折扣", "優惠券",
-                          "购物", "优惠券", "时尚汇", "旗舰店", "精品店"],
+                          "购物", "优惠券", "时尚汇", "旗舰店", "精品店",
+                          # ✏️ 新增關鍵字
+                          "百货", "好物", "產品", "紀念品", "手信", "购物中心", "消费"],
         "gaming":        ["博彩", "賭場", "casino", "積分兌換", "貴賓",
                           "博彩", "赌场", "积分", "贵宾"],
     }
@@ -629,59 +1033,172 @@ def query_db_by_filters(keyword, operators, category, max_pub_age_days=180):
     cat_excl = CATEGORY_EXCLUDES.get(effective_cat, [])
 
     if effective_cat and cat_kws:
-        inc_clauses = " OR ".join(
+        # Social posts_* 表：用 content 欄位
+        inc_clauses_social = " OR ".join([f"content LIKE ?" for _ in cat_kws])
+        inc_params_social  = [f"%{k}%" for k in cat_kws]
+
+        # Gov macau_events 表：用 title + description 欄位
+        inc_clauses_gov = " OR ".join(
             [f"title LIKE ?" for _ in cat_kws] +
             [f"description LIKE ?" for _ in cat_kws]
         )
-        inc_params = [f"%{k}%" for k in cat_kws] * 2
+        inc_params_gov = [f"%{k}%" for k in cat_kws] * 2
 
         if cat_excl:
-            excl_sql = "AND (" + " AND ".join([f"title NOT LIKE ?" for _ in cat_excl]) + ")"
-            excl_params = [f"%{k}%" for k in cat_excl]
+            excl_sql_social = "AND (" + " AND ".join([f"content NOT LIKE ?"     for _ in cat_excl]) + ")"
+            excl_sql_gov    = "AND (" + " AND ".join([f"title NOT LIKE ?"       for _ in cat_excl]) + ")"
+            excl_params     = [f"%{k}%" for k in cat_excl]
         else:
-            excl_sql = ""
-            excl_params = []
+            excl_sql_social = ""
+            excl_sql_gov    = ""
+            excl_params     = []
 
-        category_filter = f"""
+        category_filter_social = f"""
             AND (
-                category = ?
-                OR ((category IS NULL OR category = '') AND ({inc_clauses}) {excl_sql})
+                category LIKE ?
+                OR ({inc_clauses_social}) {excl_sql_social}
             )
         """
-        extra_params = [effective_cat] + inc_params + excl_params
+        category_filter_gov = f"""
+            AND (
+                category LIKE ?
+                OR ({inc_clauses_gov}) {excl_sql_gov}
+            )
+        """
+        extra_params_social = [f"%{effective_cat}%"] + inc_params_social + excl_params
+        extra_params_gov    = [f"%{effective_cat}%"] + inc_params_gov    + excl_params
     else:
-        category_filter = ""
-        extra_params = []
+        category_filter_social = ""
+        category_filter_gov    = ""
+        extra_params_social    = []
+        extra_params_gov       = []
 
     if keyword and keyword.strip():
-        kw = f'%{keyword.strip()}%'
-        keyword_clause = "(title LIKE ? OR description LIKE ? OR keyword LIKE ?)"
-        kw_params = [kw, kw, kw]
+        # 多關鍵字 OR：按逗號拆分，每個 keyword 獨立搜尋 content，OR 合併
+        # ✏️ 用 content 代替 title/description/keyword，兼容 posts_* 表
+        # gov 資料嘅 macau_events 子查詢用同一 clause（macau_events 有 description 欄位，
+        # 但 gov content 會係 description，WHERE clause 搵 content 係搵唔到）
+        # → gov 子查詢單獨用 title/description/keyword
+        all_clauses_social = []
+        all_clauses_gov = []
+        all_kw_params = []
+        for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]:
+            variants = _expand_trad_simp(single_kw)
+            per_kw_social = " OR ".join(["content LIKE ?"] * len(variants))
+            per_kw_gov    = " OR ".join(
+                ["title LIKE ? OR description LIKE ? OR keyword LIKE ?"] * len(variants)
+            )
+            all_clauses_social.append(f"({per_kw_social})")
+            all_clauses_gov.append(f"({per_kw_gov})")
+            all_kw_params += [f"%{v}%" for v in variants]
+        keyword_clause_social = "(" + " OR ".join(all_clauses_social) + ")"
+        keyword_clause_gov    = "(" + " OR ".join(all_clauses_gov) + ")"
+        kw_params_social = all_kw_params
+        kw_params_gov    = [f"%{v}%" for v in
+                            [v for single_kw in [k.strip() for k in keyword.split(',') if k.strip()]
+                             for v in _expand_trad_simp(single_kw)
+                             for _ in range(3)]]
     else:
-        keyword_clause = "1=1"
-        kw_params = []
+        keyword_clause_social = "1=1"
+        keyword_clause_gov    = "1=1"
+        kw_params_social = []
+        kw_params_gov    = []
 
-    # ✏️ CHANGED: 社媒帖文只查近期發佈嘅（政府數據唔限）
-    pub_date_filter = """
-        AND (
-            platform = 'government'
-            OR json_extract(raw_json, '$.create_date_time') >= ?
-            OR json_extract(raw_json, '$.time') >= ?
-        )
-    """
+    # ✏️ CHANGED: 改從 posts_* 四個表 query（content 更整齊），
+    # 政府資料繼續從 macau_events 抽（posts_* 冇 gov 資料）
+    # 統一輸出欄位：id, platform, operator, title, description, event_date,
+    #               category, sub_type, published_at, raw_json
+    pub_date_filter_social = f"published_at >= '{pub_cutoff}'"
 
     query = f"""
-        SELECT * FROM macau_events
-        WHERE {keyword_clause}
-        AND operator IN ({ops_placeholder})
-        {category_filter}
-        {pub_date_filter}
-        ORDER BY CASE WHEN platform = 'government' THEN 0 ELSE 1 END,
-                 COALESCE(json_extract(raw_json, '$.create_date_time'),
-                          json_extract(raw_json, '$.time'), created_at) DESC
+        SELECT * FROM (
+            SELECT
+                post_id        AS id,
+                platform,
+                operator,
+                substr(content, 1, 80) AS title,
+                content        AS description,
+                event_date,
+                category,
+                sub_type,
+                published_at,
+                raw_json,
+                NULL           AS keyword,
+                1              AS gov_rank,
+                media_text
+            FROM posts_ig
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                substr(content, 1, 80),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                media_text
+            FROM posts_fb
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                COALESCE(title, substr(content, 1, 50)),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                media_text
+            FROM posts_xhs
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                post_id, platform, operator,
+                substr(content, 1, 80),
+                content, event_date, category, sub_type,
+                published_at, raw_json, NULL, 1,
+                NULL AS media_text
+            FROM posts_weibo
+            WHERE {keyword_clause_social}
+              AND operator IN ({ops_placeholder})
+              {category_filter_social}
+              AND {pub_date_filter_social}
+
+            UNION ALL
+
+            SELECT
+                id, platform, operator,
+                title, description,
+                event_date, category, sub_type,
+                created_at, raw_json, keyword,
+                0,
+                NULL AS media_text
+            FROM macau_events
+            WHERE platform = 'government'
+              AND {keyword_clause_gov}
+              AND operator IN ({ops_placeholder})
+              {category_filter_gov}
+        )
+        ORDER BY gov_rank ASC, published_at DESC
     """
 
-    params = kw_params + list(operators) + extra_params + [pub_cutoff, pub_cutoff]
+    params = (
+        kw_params_social + list(operators) + extra_params_social +   # posts_ig
+        kw_params_social + list(operators) + extra_params_social +   # posts_fb
+        kw_params_social + list(operators) + extra_params_social +   # posts_xhs
+        kw_params_social + list(operators) + extra_params_social +   # posts_weibo
+        kw_params_gov    + list(operators) + extra_params_gov        # macau_events gov
+    )
 
     try:
         df = pd.read_sql(query, conn, params=params)
@@ -696,16 +1213,40 @@ def query_db_by_filters(keyword, operators, category, max_pub_age_days=180):
 
 # ── 寫回 AI 結果 ───────────────────────────────────────────
 def update_ai_category(title, category, sub_type):
-    """AI 分析完後將 category/sub_type 寫回 DB（只更新仍為空的記錄）"""
+    """
+    AI 分析完後將 category/sub_type 寫回 DB。
+    ✏️ CHANGED: 若記錄已有 category（多 category pipe 格式），
+    只在唔包含新 category 時 append，唔再覆蓋整個欄位。
+    """
     if not title or not category:
         return
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        """UPDATE macau_events SET category=?, sub_type=?
-           WHERE title LIKE ? AND (category IS NULL OR category='')""",
-        (category, sub_type, f'%{title[:30]}%')
+        "SELECT id, category FROM macau_events WHERE title LIKE ?",
+        (f'%{title[:30]}%',)
     )
+    rows = cursor.fetchall()
+    for row_id, existing_cat in rows:
+        if existing_cat and category in existing_cat.split('|'):
+            # 已包含，只更新 sub_type
+            cursor.execute(
+                "UPDATE macau_events SET sub_type=? WHERE id=?",
+                (sub_type, row_id)
+            )
+        elif existing_cat:
+            # Append 新 category
+            new_cat = f"{existing_cat}|{category}"
+            cursor.execute(
+                "UPDATE macau_events SET category=?, sub_type=? WHERE id=?",
+                (new_cat, sub_type, row_id)
+            )
+        else:
+            # 冇 category，直接寫入
+            cursor.execute(
+                "UPDATE macau_events SET category=?, sub_type=? WHERE id=?",
+                (category, sub_type, row_id)
+            )
     conn.commit()
     conn.close()
 
@@ -822,7 +1363,626 @@ def backfill_event_dates():
             cursor.execute("UPDATE macau_events SET event_date=? WHERE id=?", (correct, row_id))
             fixed_multi += 1
 
+    # 5) ✏️ NEW: 含「整月範圍」嘅 event_date（跨度 ≥ 28 日）→ 重新 parse
+    #    針對「5月的澳門」呢類描述性月份被舊版錯誤展開成 YYYY-MM-01~YYYY-MM-31 嘅情況
+    #    新版 extract_multi_event_dates 已加 context check，重新 parse 可得正確結果
+    import datetime as _dt
+
+    def _has_wide_range(event_date_str):
+        """檢查 event_date 字串是否含有跨度 ≥ 28 日嘅段落"""
+        for seg in event_date_str.split(','):
+            parts = seg.strip().split('~')
+            if len(parts) != 2:
+                continue
+            try:
+                s = _dt.date.fromisoformat(parts[0].strip())
+                e = _dt.date.fromisoformat(parts[1].strip())
+                if (e - s).days >= 28:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    cursor.execute(
+        "SELECT id, title, description, raw_json, event_date FROM macau_events "
+        "WHERE platform != 'government' AND event_date IS NOT NULL"
+    )
+    fixed_wide = 0
+    for row_id, title, desc, raw_json_str, old_date in cursor.fetchall():
+        if not _has_wide_range(old_date):
+            continue
+        pub_dt  = get_pub_dt(raw_json_str)
+        correct = compute_date(title, desc, pub_dt)
+        # correct 為 None 表示新版 parse 唔到任何日期，唔亂改
+        if correct and correct != old_date:
+            cursor.execute("UPDATE macau_events SET event_date=? WHERE id=?", (correct, row_id))
+            fixed_wide += 1
+            print(f"   📅 fix wide range [{row_id}]: {old_date!r} → {correct!r}")
+
     conn.commit()
     conn.close()
     print(f"🔧 backfill 完成：新增 {updated} 條 | 修正即日起至 {fixed_jiri} 條 | "
-          f"修正年份 {fixed_year} 條 | 修正多日期 {fixed_multi} 條")
+          f"修正年份 {fixed_year} 條 | 修正多日期 {fixed_multi} 條 | 修正整月範圍 {fixed_wide} 條")
+# ── 負面監測專表──────────────
+
+def init_xhs_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS xhs_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def _xhs_negative_monitor_published_at(post: dict) -> str:
+    t = post.get("create_date_time") or post.get("time")
+    if isinstance(t, (int, float)) and t > 1e12:
+        try:
+            return datetime.datetime.utcfromtimestamp(t / 1000.0).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            pass
+    if isinstance(t, (int, float)) and t > 1e9:
+        try:
+            return datetime.datetime.utcfromtimestamp(float(t)).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            pass
+    if isinstance(t, str) and t.strip():
+        s = t.strip().replace("+08:00", "").replace("+0800", "").strip()
+        return s[:19] if len(s) >= 10 else s
+    return ""
+
+
+def _negative_monitor_ingest_pub_in_range(
+    pub_str: str,
+    from_date: str | None,
+    to_date: str | None,
+) -> bool:
+    """
+    與 query_*_negative_monitor 一致：設了 from/to 時用 published_at 前 10 字元比對；
+    有區間但帖文無可解析日期時不入庫。
+    """
+    fd = (from_date or "").strip()[:10]
+    td = (to_date or "").strip()[:10]
+    if not fd and not td:
+        return True
+    if not pub_str or len(pub_str) < 10:
+        return False
+    ds = pub_str[:10]
+    if fd and ds < fd:
+        return False
+    if td and ds > td:
+        return False
+    return True
+
+
+def ingest_xhs_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """寫入 xhs_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_xhs_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_xhs_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or str(idx)
+        post_id = f"xhs_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or post.get("name") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO xhs_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 xhs_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_xhs_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_xhs_negative_monitor_table(conn)
+    q = "SELECT * FROM xhs_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_xhs_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+def init_weibo_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS weibo_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def _weibo_negative_monitor_published_at(post: dict) -> str:
+    """
+    store.weibo 寫入 create_time（Unix 秒）與 create_date_time（字串）；優先時間戳，利於入庫與日期篩選。
+    """
+
+    def _from_ts(ts: float) -> str | None:
+        if not isinstance(ts, (int, float)) or ts <= 0:
+            return None
+        try:
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return datetime.datetime.utcfromtimestamp(float(ts)).strftime("%Y-%m-%dT%H:%M:%S")
+        except Exception:
+            return None
+
+    ct = post.get("create_time")
+    if isinstance(ct, (int, float)):
+        out = _from_ts(ct)
+        if out:
+            return out
+
+    t = post.get("create_date_time") or post.get("time")
+    if isinstance(t, (int, float)):
+        out = _from_ts(t)
+        if out:
+            return out
+    if isinstance(t, str) and t.strip():
+        s = t.strip().replace("+08:00", "").replace("+0800", "").strip()
+        return s[:19] if len(s) >= 10 else s
+    return ""
+
+
+def _weibo_comments_by_note_id_from_ingest_file(comments_path: str) -> dict:
+    """與 search_contents 同次運行的 search_comments_*.json，按 note_id 索引。"""
+    if not os.path.exists(comments_path):
+        return {}
+    try:
+        with open(comments_path, "r", encoding="utf-8") as f:
+            comments = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(comments, list):
+        return {}
+    by_note: dict = {}
+    for c in comments:
+        if not isinstance(c, dict):
+            continue
+        nid = c.get("note_id")
+        if nid is None:
+            continue
+        by_note.setdefault(str(nid), []).append(c)
+    return by_note
+
+
+def ingest_weibo_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_weibo_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_weibo_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    comments_path = json_file.replace("search_contents_", "search_comments_")
+    comments_by_note = _weibo_comments_by_note_id_from_ingest_file(comments_path)
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or post.get("mid") or str(idx)
+        post_id = f"weibo_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _weibo_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        range_set = bool((from_date or "").strip()[:10] or (to_date or "").strip()[:10])
+        ok_pub = _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date) if range_set else True
+        best_cpub = ""
+        if range_set and not ok_pub:
+            for c in comments_by_note.get(str(raw_id), []):
+                cpub = _weibo_negative_monitor_published_at(c)
+                if _negative_monitor_ingest_pub_in_range(cpub, from_date, to_date):
+                    if not best_cpub or cpub > best_cpub:
+                        best_cpub = cpub
+        if range_set and not ok_pub and not best_cpub:
+            continue
+
+        effective_pub = best_cpub if (range_set and not ok_pub and best_cpub) else pub_str
+
+        body = (post.get("content") or "").strip()
+        title = body[:100] + ("…" if len(body) > 100 else "")
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO weibo_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                effective_pub,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 weibo_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_weibo_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_weibo_negative_monitor_table(conn)
+    q = "SELECT * FROM weibo_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_weibo_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+# ── Instagram / Facebook 負面監測專表（Apify 關鍵詞搜索）────────────────
+
+
+def init_ig_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ig_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def init_fb_negative_monitor_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fb_negative_monitor (
+            post_id         TEXT PRIMARY KEY,
+            note_id         TEXT,
+            title           TEXT,
+            content         TEXT,
+            published_at    TEXT,
+            post_url        TEXT,
+            source_keyword  TEXT,
+            raw_json        TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def ingest_ig_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """僅寫入 ig_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_ig_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_ig_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("id") or str(idx)
+        post_id = f"ig_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or post.get("name") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO ig_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 ig_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_ig_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_ig_negative_monitor_table(conn)
+    q = "SELECT * FROM ig_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_ig_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
+
+
+def ingest_fb_negative_monitor_json(
+    json_file: str,
+    skip_ids: set | None = None,
+    max_age_days: int = 90,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> int:
+    """寫入 fb_negative_monitor。"""
+    if not os.path.exists(json_file):
+        print(f"❌ ingest_fb_negative_monitor_json: 找不到 {json_file}")
+        return 0
+    conn = get_connection()
+    init_fb_negative_monitor_table(conn)
+    cursor = conn.cursor()
+    with open(json_file, "r", encoding="utf-8") as f:
+        posts = json.load(f)
+    if not isinstance(posts, list):
+        posts = []
+
+    cutoff_dt = datetime.datetime.now() - datetime.timedelta(days=max_age_days)
+    skip_ids = skip_ids or set()
+    count = 0
+
+    for idx, post in enumerate(posts):
+        if not isinstance(post, dict):
+            continue
+        raw_id = post.get("note_id") or post.get("postId") or post.get("id") or str(idx)
+        post_id = f"fb_{raw_id}"
+        if str(raw_id) in skip_ids:
+            continue
+
+        pub_str = _xhs_negative_monitor_published_at(post)
+        if pub_str:
+            try:
+                pdt = datetime.datetime.fromisoformat(pub_str.replace("Z", ""))
+                if pdt.replace(tzinfo=None) < cutoff_dt:
+                    continue
+            except Exception:
+                pass
+
+        if not _negative_monitor_ingest_pub_in_range(pub_str, from_date, to_date):
+            continue
+
+        title = (post.get("title") or "").strip()
+        body = (post.get("desc") or post.get("content") or "").strip()
+        url = (post.get("note_url") or "").strip()
+        skw = (post.get("source_keyword") or "").strip()
+
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO fb_negative_monitor
+            (post_id, note_id, title, content, published_at, post_url, source_keyword, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                post_id,
+                str(raw_id),
+                title,
+                body,
+                pub_str,
+                url,
+                skw,
+                json.dumps(post, ensure_ascii=False),
+            ),
+        )
+        count += 1
+
+    conn.commit()
+    conn.close()
+    print(f"📦 fb_negative_monitor 入庫/更新：{count} 條 ← {json_file}")
+    return count
+
+
+def query_fb_negative_monitor(
+    from_date: str | None,
+    to_date: str | None,
+    limit: int = 300,
+) -> pd.DataFrame:
+    conn = get_connection()
+    init_fb_negative_monitor_table(conn)
+    q = "SELECT * FROM fb_negative_monitor WHERE 1=1"
+    params: list = []
+    if from_date and str(from_date).strip():
+        q += " AND substr(published_at,1,10) >= ?"
+        params.append(str(from_date).strip()[:10])
+    if to_date and str(to_date).strip():
+        q += " AND substr(published_at,1,10) <= ?"
+        params.append(str(to_date).strip()[:10])
+    q += " ORDER BY published_at DESC LIMIT ?"
+    params.append(int(limit))
+    try:
+        df = pd.read_sql_query(q, conn, params=params)
+    except Exception as e:
+        print(f"❌ query_fb_negative_monitor: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df

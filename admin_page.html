@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Macau Resort Analytics · Admin Panel</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  font-family:'DM Sans',ui-sans-serif,system-ui,sans-serif;
+  background:#F6F8FC;
+  color:#0F172A;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+}
+
+/* ── Top bar ── */
+.topbar{
+  height:60px;
+  background:#fff;
+  border-bottom:1px solid rgba(17,24,39,0.08);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 28px;
+  position:sticky;
+  top:0;
+  z-index:100;
+  flex-shrink:0;
+}
+.topbar-left{display:flex;align-items:center;gap:14px;}
+.topbar-logo{
+  width:36px;height:36px;border-radius:10px;
+  background:linear-gradient(135deg,#2563EB,#16A34A);
+  display:grid;place-items:center;
+  font-weight:700;font-size:13px;color:#fff;
+  flex-shrink:0;
+}
+.topbar-title{font-size:15px;font-weight:600;color:#0F172A;}
+.topbar-badge{
+  background:rgba(37,99,235,0.18);color:#3B82F6;
+  border:1px solid rgba(37,99,235,0.35);
+  font-size:11px;font-weight:600;
+  padding:2px 9px;border-radius:20px;
+  letter-spacing:.4px;text-transform:uppercase;
+}
+.topbar-right{display:flex;align-items:center;gap:12px;}
+.topbar-user{display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(15,23,42,0.55);}
+.topbar-avatar{
+  width:32px;height:32px;border-radius:50%;
+  background:linear-gradient(135deg,#2563EB,#16A34A);
+  display:grid;place-items:center;
+  font-size:12px;font-weight:700;color:#fff;
+}
+.btn-signout{
+  background:rgba(220,38,38,0.12);color:#B91C1C;
+  border:1px solid rgba(220,38,38,0.25);
+  padding:6px 14px;border-radius:8px;
+  font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;transition:.15s ease;
+}
+.btn-signout:hover{background:rgba(220,38,38,0.22);}
+
+/* ── Main content ── */
+.main{
+  flex:1;display:flex;flex-direction:column;
+  padding:28px 32px;gap:24px;
+  max-width:1400px;width:100%;
+  margin:0 auto;
+}
+
+/* ── Stats row ── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+.stat-card{
+  background:#fff;border:1px solid rgba(17,24,39,0.08);
+  border-radius:14px;padding:18px 20px;
+  display:flex;align-items:center;gap:14px;
+}
+.stat-icon{
+  width:42px;height:42px;border-radius:10px;
+  display:grid;place-items:center;font-size:18px;flex-shrink:0;
+}
+.stat-value{font-size:22px;font-weight:700;line-height:1;}
+.stat-label{font-size:12px;color:rgba(15,23,42,0.55);margin-top:4px;}
+
+/* ── Toolbar ── */
+.toolbar{
+  display:flex;align-items:center;
+  justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+.toolbar-left{display:flex;align-items:center;gap:10px;flex:1;min-width:240px;}
+.search-wrap{position:relative;flex:1;max-width:340px;}
+.search-wrap svg{
+  position:absolute;left:11px;top:50%;transform:translateY(-50%);
+  width:15px;height:15px;opacity:.4;pointer-events:none;
+}
+.search-wrap input{
+  width:100%;padding:8px 12px 8px 34px;
+  background:#fff;border:1px solid rgba(17,24,39,0.13);
+  border-radius:9px;color:#0F172A;font-family:inherit;font-size:13px;
+}
+.filter-select{
+  padding:8px 28px 8px 10px;border-radius:9px;
+  background:#fff;border:1px solid rgba(17,24,39,0.13);
+  color:#0F172A;font-family:inherit;font-size:13px;
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;
+}
+.btn-add{
+  display:flex;align-items:center;gap:7px;
+  padding:8px 18px;border-radius:9px;border:none;
+  cursor:pointer;background:#2563EB;color:#fff;
+  font-family:inherit;font-size:13px;font-weight:600;transition:.15s ease;
+}
+.btn-add:hover{background:#3B82F6;}
+
+/* ── Table card ── */
+.table-card{
+  background:#fff;border:1px solid rgba(17,24,39,0.08);
+  border-radius:14px;overflow:hidden;
+}
+.table-header{
+  padding:14px 20px;border-bottom:1px solid rgba(17,24,39,0.08);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.table-header span:first-child{font-size:14px;font-weight:600;}
+#adm-row-count{font-size:12px;color:rgba(15,23,42,0.55);font-family:ui-monospace,monospace;}
+table{width:100%;border-collapse:collapse;}
+thead tr{background:#F1F5F9;}
+th{
+  padding:11px 16px;text-align:left;
+  font-size:11px;font-weight:600;color:rgba(15,23,42,0.55);
+  text-transform:uppercase;letter-spacing:.5px;
+  border-bottom:1px solid rgba(17,24,39,0.08);white-space:nowrap;
+}
+td{
+  padding:12px 16px;
+  font-size:13px;border-bottom:1px solid rgba(17,24,39,0.05);
+  vertical-align:middle;
+}
+tbody tr:last-child td{border-bottom:none;}
+tbody tr:hover{background:#F8FAFC;}
+
+/* ── Modals ── */
+.modal-overlay{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,0.65);z-index:600;
+  align-items:center;justify-content:center;padding:20px;
+}
+.modal-box{
+  background:#fff;border:1px solid rgba(17,24,39,0.13);
+  border-radius:18px;width:100%;
+  box-shadow:0 32px 64px rgba(0,0,0,0.4);
+  animation:admSlideUp .2s ease;
+}
+.modal-head{
+  padding:22px 24px 18px;
+  border-bottom:1px solid rgba(17,24,39,0.08);
+  display:flex;align-items:center;justify-content:space-between;
+}
+.modal-head span{font-size:16px;font-weight:700;}
+.modal-close{
+  background:rgba(0,0,0,0.06);border:none;
+  color:rgba(15,23,42,0.55);width:30px;height:30px;
+  border-radius:8px;cursor:pointer;font-size:18px;
+  display:grid;place-items:center;line-height:1;
+}
+.modal-body{padding:20px 24px;}
+.modal-foot{
+  padding:16px 24px;border-top:1px solid rgba(17,24,39,0.08);
+  display:flex;gap:10px;justify-content:flex-end;
+}
+.modal-label{
+  display:block;font-size:11px;font-weight:600;
+  margin-bottom:5px;color:rgba(15,23,42,0.55);
+  letter-spacing:.4px;text-transform:uppercase;
+}
+.modal-input{
+  width:100%;padding:9px 12px;border-radius:9px;
+  background:#fff;border:1px solid rgba(17,24,39,0.13);
+  color:#0F172A;font-family:inherit;font-size:13px;
+}
+.modal-select{
+  width:100%;padding:9px 28px 9px 12px;border-radius:9px;
+  background:#fff;border:1px solid rgba(17,24,39,0.13);
+  color:#0F172A;font-family:inherit;font-size:13px;
+  appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center;
+}
+.pw-wrap{position:relative;}
+.pw-wrap .modal-input{padding-right:40px;}
+.pw-eye{
+  position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  background:none;border:none;cursor:pointer;
+  color:rgba(15,23,42,0.55);display:flex;align-items:center;padding:2px;
+}
+.modal-alert{
+  display:none;padding:9px 13px;border-radius:9px;
+  font-size:12.5px;font-weight:500;margin-bottom:14px;
+  background:#FEF2F2;border:1px solid #FECACA;color:#B91C1C;
+}
+.btn-cancel{
+  padding:9px 18px;border-radius:9px;
+  border:1px solid rgba(17,24,39,0.13);
+  background:transparent;color:rgba(15,23,42,0.55);
+  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;
+}
+.btn-primary{
+  padding:9px 22px;border-radius:9px;border:none;
+  background:#2563EB;color:#fff;
+  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;
+}
+.btn-danger{
+  padding:9px 18px;border-radius:9px;border:none;
+  background:#DC2626;color:#fff;
+  font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;
+}
+
+/* ── Toast ── */
+#adm-toast-container{
+  position:fixed;bottom:24px;right:24px;z-index:999;
+  display:flex;flex-direction:column;gap:8px;
+}
+
+@keyframes admSlideUp{
+  from{transform:translateY(20px);opacity:0}
+  to{transform:translateY(0);opacity:1}
+}
+
+@media(max-width:900px){
+  .stats-row{grid-template-columns:1fr 1fr;}
+  .main{padding:20px 16px;}
+}
+@media(max-width:560px){
+  .stats-row{grid-template-columns:1fr;}
+  .toolbar{flex-direction:column;align-items:stretch;}
+}
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">MR</div>
+    <span class="topbar-title">Macau Resort Analytics</span>
+    <span class="topbar-badge">Admin Panel</span>
+  </div>
+  <div class="topbar-right">
+    <div class="topbar-user">
+      Signed in as&nbsp;<strong id="adm-topbar-name" style="color:#0F172A;font-weight:600;"></strong>
+    </div>
+    <div id="adm-topbar-avatar" class="topbar-avatar"></div>
+    <button class="btn-signout" onclick="handleSignOut()">Sign Out</button>
+  </div>
+</div>
+
+<!-- ── Main ── -->
+<div class="main">
+
+  <!-- Stats row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon" style="background:rgba(37,99,235,0.14);">👥</div>
+      <div><div id="adm-stat-total" class="stat-value">—</div><div class="stat-label">Total Users</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background:rgba(220,38,38,0.14);">🔑</div>
+      <div><div id="adm-stat-admins" class="stat-value">—</div><div class="stat-label">IT Admins</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background:rgba(22,163,74,0.14);">✅</div>
+      <div><div id="adm-stat-regular" class="stat-value">—</div><div class="stat-label">Regular Users</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background:rgba(217,119,6,0.14);">🏢</div>
+      <div><div id="adm-stat-depts" class="stat-value">—</div><div class="stat-label">Departments</div></div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <div class="search-wrap">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="adm-search" type="text" placeholder="Search by name, email, department…" oninput="admRenderTable()">
+      </div>
+      <select id="adm-filter-dept" class="filter-select" onchange="admRenderTable()">
+        <option value="">All Departments</option>
+      </select>
+      <select id="adm-filter-position" class="filter-select" onchange="admRenderTable()">
+        <option value="">All Positions</option>
+        <option value="Analyst">Analyst</option>
+        <option value="Manager">Manager</option>
+        <option value="Executive">Executive</option>
+        <option value="Director">Director</option>
+        <option value="IT Admin">IT Admin</option>
+      </select>
+      <select id="adm-filter-role" class="filter-select" onchange="admRenderTable()">
+        <option value="">All Roles</option>
+        <option value="admin">Admin</option>
+        <option value="user">User</option>
+      </select>
+    </div>
+    <button class="btn-add" onclick="admOpenCreateModal()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:15px;height:15px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add User
+    </button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-card">
+    <div class="table-header">
+      <span>User Directory</span>
+      <span id="adm-row-count">Loading…</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="adm-table">
+        <thead>
+          <tr>
+            <th>User ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Department</th>
+            <th>Position</th>
+            <th>Role</th>
+            <th>Joined</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="adm-table-body">
+          <tr><td colspan="8" style="padding:56px 20px;text-align:center;color:rgba(15,23,42,0.55);">Loading users…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- end main -->
+
+<!-- Toast container -->
+<div id="adm-toast-container"></div>
+
+<!-- ── MODAL: CREATE / EDIT USER ── -->
+<div id="adm-user-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:500px;">
+    <div class="modal-head">
+      <span id="adm-modal-title">Add New User</span>
+      <button class="modal-close" onclick="admCloseModal('adm-user-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="adm-user-alert" class="modal-alert"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+        <div style="margin-bottom:16px;">
+          <label class="modal-label">First Name</label>
+          <input type="text" id="adm-m-first" class="modal-input" placeholder="e.g., Amy">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="modal-label">Last Name</label>
+          <input type="text" id="adm-m-last" class="modal-input" placeholder="e.g., Chan">
+        </div>
+        <div style="margin-bottom:16px;grid-column:1/-1;">
+          <label class="modal-label">Email Address</label>
+          <input type="email" id="adm-m-email" class="modal-input" placeholder="e.g., amychan@wynnpalace.com">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="modal-label">Department</label>
+          <select id="adm-m-dept" class="modal-select">
+            <option value="" disabled selected>Select department</option>
+            <option>Analytics</option><option>Finance</option><option>Operations</option>
+            <option>Marketing</option><option>IT &amp; Systems</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px;">
+          <label class="modal-label">Position</label>
+          <select id="adm-m-position" class="modal-select">
+            <option value="" disabled selected>Select position</option>
+            <option>Analyst</option><option>Manager</option>
+            <option>Executive</option><option>Director</option><option>IT Admin</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px;grid-column:1/-1;">
+          <label class="modal-label">System Role</label>
+          <select id="adm-m-role" class="modal-select">
+            <option value="user">User — Access to Operation panel</option>
+            <option value="admin">Admin — Access to Admin Panel</option>
+          </select>
+        </div>
+        <div id="adm-m-pw-field" style="margin-bottom:16px;grid-column:1/-1;">
+          <label class="modal-label">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="adm-m-password" class="modal-input" placeholder="Min. 8 characters">
+            <button type="button" class="pw-eye" onclick="admTogglePw('adm-m-password')">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-cancel" onclick="admCloseModal('adm-user-modal')">Cancel</button>
+      <button id="adm-modal-save-btn" class="btn-primary" onclick="admHandleSaveUser()">Create User</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: RESET PASSWORD ── -->
+<div id="adm-pw-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:460px;">
+    <div class="modal-head">
+      <span>Reset Password</span>
+      <button class="modal-close" onclick="admCloseModal('adm-pw-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="adm-pw-alert" class="modal-alert"></div>
+      <p style="font-size:13px;color:rgba(15,23,42,0.55);margin-bottom:16px;line-height:1.6;">
+        Set a new password for <strong id="adm-pw-target-name" style="color:#0F172A;"></strong>.
+      </p>
+      <div style="margin-bottom:14px;">
+        <label class="modal-label">New Password</label>
+        <div class="pw-wrap">
+          <input type="password" id="adm-pw-new" class="modal-input" placeholder="Min. 8 characters">
+          <button type="button" class="pw-eye" onclick="admTogglePw('adm-pw-new')">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div>
+        <label class="modal-label">Confirm Password</label>
+        <div class="pw-wrap">
+          <input type="password" id="adm-pw-confirm" class="modal-input" placeholder="Re-enter password">
+          <button type="button" class="pw-eye" onclick="admTogglePw('adm-pw-confirm')">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:15px;height:15px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-cancel" onclick="admCloseModal('adm-pw-modal')">Cancel</button>
+      <button id="adm-pw-save-btn" class="btn-primary" onclick="admHandleResetPassword()">Reset Password</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: DELETE CONFIRM ── -->
+<div id="adm-del-modal" class="modal-overlay">
+  <div class="modal-box" style="max-width:420px;">
+    <div style="padding:22px 24px 0;display:flex;align-items:center;justify-content:flex-end;">
+      <button class="modal-close" onclick="admCloseModal('adm-del-modal')">×</button>
+    </div>
+    <div style="padding:8px 24px 20px;text-align:center;">
+      <div style="width:52px;height:52px;border-radius:14px;background:rgba(220,38,38,0.14);display:grid;place-items:center;margin:0 auto 16px;font-size:24px;">🗑️</div>
+      <h3 style="font-size:16px;font-weight:700;margin-bottom:8px;">Delete User Account</h3>
+      <p style="font-size:13px;color:rgba(15,23,42,0.55);line-height:1.6;">
+        Are you sure you want to permanently delete
+        <strong id="adm-del-target-name" style="color:#0F172A;"></strong>'s account?
+        This cannot be undone.
+      </p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-cancel" onclick="admCloseModal('adm-del-modal')">Cancel</button>
+      <button id="adm-del-confirm-btn" class="btn-danger" onclick="admHandleDeleteUser()">Yes, Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Session guard: only IT Admins allowed ────────────────
+const _sp = new URLSearchParams(window.location.search);
+const _session = _sp.get('first_name') ? {
+  first_name : _sp.get('first_name'),
+  last_name  : _sp.get('last_name'),
+  email      : _sp.get('email'),
+  position   : _sp.get('position'),
+  role       : _sp.get('role') || 'user',
+  token      : _sp.get('token') || '',
+} : null;
+
+if (!_session) {
+  window.location.href = 'login_page.html';
+} else if (_session.position !== 'IT Admin') {
+  // Non-admins who somehow land here get kicked to the panel
+  window.location.href = 'operation_panel.html?' + window.location.search.slice(1);
+} else {
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('adm-topbar-name').textContent =
+      _session.first_name + ' ' + _session.last_name;
+    document.getElementById('adm-topbar-avatar').textContent =
+      (_session.first_name[0] + _session.last_name[0]).toUpperCase();
+    admLoadUsers();
+  });
+}
+
+function handleSignOut() {
+  window.location.href = 'login_page.html';
+}
+
+// ── API ──────────────────────────────────────────────────
+const ADM_API = 'http://127.0.0.1:9038';
+let admAllUsers      = [];
+let admEditingUserId = null;
+let admTargetUserId  = null;
+
+// ── Load users ───────────────────────────────────────────
+async function admLoadUsers() {
+  const params = new URLSearchParams({ admin_email: _session.email, admin_token: _session.token });
+  try {
+    const res  = await fetch(`${ADM_API}/admin/users?${params}`);
+    const data = await res.json();
+    if (!data.success) { admShowToast('Failed to load users: ' + data.message, 'error'); return; }
+    admAllUsers = data.users;
+    admUpdateStats();
+    admPopulateDeptFilter();
+    admRenderTable();
+  } catch {
+    admShowToast('Cannot reach server. Make sure bridge.py is running on port 9038.', 'error');
+  }
+}
+
+function admUpdateStats() {
+  document.getElementById('adm-stat-total').textContent   = admAllUsers.length;
+  document.getElementById('adm-stat-admins').textContent  = admAllUsers.filter(u => u.Position === 'IT Admin').length;
+  document.getElementById('adm-stat-regular').textContent = admAllUsers.filter(u => u.Position !== 'IT Admin').length;
+  document.getElementById('adm-stat-depts').textContent   = new Set(admAllUsers.map(u => u.Department)).size;
+}
+
+function admPopulateDeptFilter() {
+  const sel  = document.getElementById('adm-filter-dept');
+  const cur  = sel.value;
+  const depts = [...new Set(admAllUsers.map(u => u.Department))].sort();
+  sel.innerHTML = '<option value="">All Departments</option>' +
+    depts.map(d => `<option value="${d}">${d}</option>`).join('');
+  sel.value = cur;
+}
+
+// ── Render table ─────────────────────────────────────────
+function admRenderTable() {
+  const q    = document.getElementById('adm-search').value.toLowerCase();
+  const dept = document.getElementById('adm-filter-dept').value;
+  const position = document.getElementById('adm-filter-position').value;
+  const role = document.getElementById('adm-filter-role').value;
+  const ADM_COLORS = ['#2563EB','#7C3AED','#DB2777','#D97706','#059669','#0891B2','#DC2626','#16A34A'];
+
+  const filtered = admAllUsers.filter(u => {
+    const matchQ = !q || [u['First Name'],u['Last Name'],u['Email Address'],u.Department,u.Position]
+      .some(v => v && v.toLowerCase().includes(q));
+    const matchD = !dept || u.Department === dept;
+    const matchP = !position || u.Position === position;
+    const matchR = !role || (role === 'admin' ? u.Position === 'IT Admin' : u.Position !== 'IT Admin');
+    return matchQ && matchD && matchP && matchR;
+  });
+
+  document.getElementById('adm-row-count').textContent =
+    `${filtered.length} of ${admAllUsers.length} user${admAllUsers.length !== 1 ? 's' : ''}`;
+
+  const tbody = document.getElementById('adm-table-body');
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="padding:56px 20px;text-align:center;color:rgba(15,23,42,0.55);">No users match your search.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(u => {
+    const initials = (u['First Name'][0] + u['Last Name'][0]).toUpperCase();
+    const color    = ADM_COLORS[u['User ID'] % ADM_COLORS.length];
+    const date     = u['Date Joined'] ? u['Date Joined'].slice(0, 10) : '—';
+    const isAdmin  = u.Position === 'IT Admin';
+    const isSelf   = u['Email Address'] === _session.email;
+
+    return `
+      <tr>
+        <td style="font-family:ui-monospace,monospace;font-size:12px;color:rgba(15,23,42,0.55);">#${u['User ID']}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:30px;height:30px;border-radius:50%;background:${color}22;color:${color};
+              display:grid;place-items:center;font-size:11px;font-weight:700;flex-shrink:0;">${initials}</div>
+            <span style="font-weight:600;">${u['First Name']} ${u['Last Name']}${isSelf ? ' <span style="font-size:10px;background:rgba(37,99,235,0.12);color:#2563EB;padding:1px 6px;border-radius:10px;">You</span>' : ''}</span>
+          </div>
+        </td>
+        <td style="color:rgba(15,23,42,0.65);">${u['Email Address']}</td>
+        <td>${u.Department || '—'}</td>
+        <td>${u.Position || '—'}</td>
+        <td>
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;
+            ${isAdmin
+              ? 'background:rgba(37,99,235,0.12);color:#2563EB;border:1px solid rgba(37,99,235,0.25);'
+              : 'background:rgba(15,23,42,0.06);color:rgba(15,23,42,0.55);border:1px solid rgba(15,23,42,0.10);'}">
+            ${isAdmin ? '🔑 Admin' : '👤 User'}
+          </span>
+        </td>
+        <td style="color:rgba(15,23,42,0.55);font-size:12px;">${date}</td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <button onclick="admOpenEditModal(${u['User ID']})"
+              style="padding:5px 12px;border-radius:7px;border:1px solid rgba(17,24,39,0.13);
+                background:transparent;color:#0F172A;font-size:12px;font-weight:600;cursor:pointer;
+                font-family:inherit;transition:.15s ease;"
+              onmouseover="this.style.background='#F1F5F9'"
+              onmouseout="this.style.background='transparent'">Edit</button>
+            <button onclick="admOpenResetPwModal(${u['User ID']})"
+              style="padding:5px 12px;border-radius:7px;border:1px solid rgba(37,99,235,0.25);
+                background:rgba(37,99,235,0.08);color:#2563EB;font-size:12px;font-weight:600;cursor:pointer;
+                font-family:inherit;transition:.15s ease;"
+              onmouseover="this.style.background='rgba(37,99,235,0.16)'"
+              onmouseout="this.style.background='rgba(37,99,235,0.08)'">Reset PW</button>
+            ${!isSelf ? `
+            <button onclick="admOpenDeleteModal(${u['User ID']})"
+              style="padding:5px 12px;border-radius:7px;border:1px solid rgba(220,38,38,0.25);
+                background:rgba(220,38,38,0.08);color:#DC2626;font-size:12px;font-weight:600;cursor:pointer;
+                font-family:inherit;transition:.15s ease;"
+              onmouseover="this.style.background='rgba(220,38,38,0.16)'"
+              onmouseout="this.style.background='rgba(220,38,38,0.08)'">Delete</button>` : ''}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+// ── Modal helpers ────────────────────────────────────────
+function admOpenModal(id)  { const el = document.getElementById(id); el.style.display = 'flex'; }
+function admCloseModal(id) { document.getElementById(id).style.display = 'none'; }
+
+// ── Create modal ─────────────────────────────────────────
+function admOpenCreateModal() {
+  admEditingUserId = null;
+  document.getElementById('adm-modal-title').textContent    = 'Add New User';
+  document.getElementById('adm-modal-save-btn').textContent = 'Create User';
+  document.getElementById('adm-m-pw-field').style.display   = '';
+  ['adm-m-first','adm-m-last','adm-m-email','adm-m-password'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('adm-m-dept').selectedIndex     = 0;
+  document.getElementById('adm-m-position').selectedIndex = 0;
+  document.getElementById('adm-m-role').value             = 'user';
+  document.getElementById('adm-user-alert').style.display = 'none';
+  admOpenModal('adm-user-modal');
+}
+
+// ── Edit modal ───────────────────────────────────────────
+function admOpenEditModal(userId) {
+  const u = admAllUsers.find(x => x['User ID'] === userId);
+  if (!u) return;
+  admEditingUserId = userId;
+  document.getElementById('adm-modal-title').textContent    = 'Edit User';
+  document.getElementById('adm-modal-save-btn').textContent = 'Save Changes';
+  document.getElementById('adm-m-pw-field').style.display   = 'none';
+  document.getElementById('adm-m-first').value    = u['First Name']    || '';
+  document.getElementById('adm-m-last').value     = u['Last Name']     || '';
+  document.getElementById('adm-m-email').value    = u['Email Address'] || '';
+  document.getElementById('adm-m-dept').value     = u.Department       || '';
+  document.getElementById('adm-m-position').value = u.Position         || '';
+  document.getElementById('adm-m-role').value     = u.Position === 'IT Admin' ? 'admin' : 'user';
+  document.getElementById('adm-user-alert').style.display = 'none';
+  admOpenModal('adm-user-modal');
+}
+
+// ── Reset password modal ─────────────────────────────────
+function admOpenResetPwModal(userId) {
+  const u = admAllUsers.find(x => x['User ID'] === userId);
+  if (!u) return;
+  admTargetUserId = userId;
+  document.getElementById('adm-pw-target-name').textContent = u['First Name'] + ' ' + u['Last Name'];
+  document.getElementById('adm-pw-new').value               = '';
+  document.getElementById('adm-pw-confirm').value           = '';
+  document.getElementById('adm-pw-alert').style.display     = 'none';
+  admOpenModal('adm-pw-modal');
+}
+
+// ── Delete modal ─────────────────────────────────────────
+function admOpenDeleteModal(userId) {
+  const u = admAllUsers.find(x => x['User ID'] === userId);
+  if (!u) return;
+  admTargetUserId = userId;
+  document.getElementById('adm-del-target-name').textContent = u['First Name'] + ' ' + u['Last Name'];
+  admOpenModal('adm-del-modal');
+}
+
+// ── Save user ────────────────────────────────────────────
+async function admHandleSaveUser() {
+  const first    = document.getElementById('adm-m-first').value.trim();
+  const last     = document.getElementById('adm-m-last').value.trim();
+  const emailEl  = document.getElementById('adm-m-email');
+  const email    = emailEl.value.trim().toLowerCase();
+  const dept     = document.getElementById('adm-m-dept').value;
+  const position = document.getElementById('adm-m-position').value;
+  const role     = document.getElementById('adm-m-role').value;
+  const password = document.getElementById('adm-m-password').value;
+  const alertEl  = document.getElementById('adm-user-alert');
+  const showErr  = (msg) => { alertEl.textContent = msg; alertEl.style.display = 'block'; };
+
+  if (!first || !last || !email || !dept || !position) { showErr('Please fill in all fields.'); return; }
+  if (!emailEl.checkValidity()) { showErr('Please fill in valid information'); return; }
+  if (!admEditingUserId && (!password || password.length < 8)) { showErr('Password must be at least 8 characters.'); return; }
+
+  const btn  = document.getElementById('adm-modal-save-btn');
+  btn.disabled = true;
+  const body = { admin_email: _session.email, admin_token: _session.token, first_name: first, last_name: last, email, department: dept, position, role };
+  try {
+    let res;
+    if (admEditingUserId) {
+      res = await fetch(`${ADM_API}/admin/users/${admEditingUserId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+    } else {
+      body.password = password;
+      res = await fetch(`${ADM_API}/admin/users`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+    }
+    const data = await res.json();
+    if (data.success) {
+      admCloseModal('adm-user-modal');
+      admShowToast(admEditingUserId ? 'User updated.' : `User created (ID: ${data.user_id}).`, 'success');
+      await admLoadUsers();
+    } else { showErr(data.message || 'Operation failed.'); }
+  } catch { showErr('Cannot reach server.'); }
+  finally { btn.disabled = false; }
+}
+
+// ── Reset password ───────────────────────────────────────
+async function admHandleResetPassword() {
+  const newPw   = document.getElementById('adm-pw-new').value;
+  const confirm = document.getElementById('adm-pw-confirm').value;
+  const alertEl = document.getElementById('adm-pw-alert');
+  const showErr = (msg) => { alertEl.textContent = msg; alertEl.style.display = 'block'; };
+  if (!newPw || newPw.length < 8) { showErr('Password must be at least 8 characters.'); return; }
+  if (newPw !== confirm)           { showErr('Passwords do not match.'); return; }
+  const btn = document.getElementById('adm-pw-save-btn');
+  btn.disabled = true;
+  try {
+    const res  = await fetch(`${ADM_API}/admin/users/${admTargetUserId}/password`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_email: _session.email, admin_token: _session.token, new_password: newPw })
+    });
+    const data = await res.json();
+    if (data.success) { admCloseModal('adm-pw-modal'); admShowToast('Password reset successfully.', 'success'); }
+    else { showErr(data.message || 'Failed.'); }
+  } catch { showErr('Cannot reach server.'); }
+  finally { btn.disabled = false; }
+}
+
+// ── Delete user ──────────────────────────────────────────
+async function admHandleDeleteUser() {
+  const btn = document.getElementById('adm-del-confirm-btn');
+  btn.disabled = true;
+  try {
+    const res  = await fetch(`${ADM_API}/admin/users/${admTargetUserId}`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_email: _session.email, admin_token: _session.token })
+    });
+    const data = await res.json();
+    if (data.success) {
+      admCloseModal('adm-del-modal');
+      admShowToast('User deleted.', 'success');
+      await admLoadUsers();
+    } else {
+      admShowToast(data.message || 'Delete failed.', 'error');
+      admCloseModal('adm-del-modal');
+    }
+  } catch { admShowToast('Cannot reach server.', 'error'); }
+  finally { btn.disabled = false; }
+}
+
+// ── Helpers ──────────────────────────────────────────────
+function admTogglePw(id) {
+  const inp = document.getElementById(id);
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+function admShowToast(msg, type = 'success') {
+  const c = document.getElementById('adm-toast-container');
+  const t = document.createElement('div');
+  t.style.cssText = `padding:12px 18px;border-radius:10px;font-size:13px;font-weight:500;
+    display:flex;align-items:center;gap:8px;max-width:320px;
+    box-shadow:0 8px 24px rgba(0,0,0,.15);animation:admSlideUp .2s ease;`;
+  t.style.cssText += type === 'success'
+    ? 'background:#F0FDF4;border:1px solid rgba(22,163,74,.3);color:#15803D;'
+    : 'background:#FEF2F2;border:1px solid rgba(220,38,38,.3);color:#B91C1C;';
+  t.textContent = (type === 'success' ? '✅ ' : '❌ ') + msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+// Close modals on overlay click
+['adm-user-modal','adm-pw-modal','adm-del-modal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    if (e.target === document.getElementById(id)) admCloseModal(id);
+  });
+});
+</script>
+</body>
+</html>

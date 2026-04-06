@@ -42,6 +42,11 @@ from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import weibo as weibo_store
 from tools import utils
 from tools.cdp_browser import CDPBrowserManager
+from tools.negative_monitor_date import (
+    negative_monitor_crawl_range_from_env,
+    weibo_api_comment_tree_any_in_range,
+    weibo_mblog_any_candidate_in_range,
+)
 from var import crawler_type_var, source_keyword_var
 
 from .client import WeiboClient
@@ -65,6 +70,35 @@ class WeiboCrawler(AbstractCrawler):
         self.cdp_manager = None
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
 
+    async def _weibo_note_allowed_in_negative_monitor_range(self, mblog: dict) -> bool:
+        fr, to_ = negative_monitor_crawl_range_from_env()
+        if not fr and not to_:
+            return True
+        if weibo_mblog_any_candidate_in_range(mblog, fr, to_):
+            return True
+        if not config.ENABLE_GET_COMMENTS:
+            utils.logger.info(
+                "[WeiboCrawler.search] Skip note: 帖文不在日期區間且未開啟評論抓取，無法按評論時間保留"
+            )
+            return False
+        note_id = mblog.get("id")
+        if not note_id:
+            return False
+        try:
+            comments_res = await self.wb_client.get_note_comments(str(note_id), max_id=-1, max_id_type=0)
+        except DataFetchError as ex:
+            utils.logger.warning(
+                f"[WeiboCrawler.search] 拉取熱評以判斷日期區間失敗 note={note_id}: {ex}"
+            )
+            return False
+        raw = comments_res.get("data") if isinstance(comments_res, dict) else None
+        comment_list = raw if isinstance(raw, list) else []
+        ok = weibo_api_comment_tree_any_in_range(comment_list, fr, to_)
+        if ok:
+            utils.logger.info(
+                f"[WeiboCrawler.search] 帖文不在區間但熱評在 NEGATIVE_MONITOR 區間內，保留: {note_id}"
+            )
+        return ok
     async def start(self):
         playwright_proxy_format, httpx_proxy_format = None, None
         if config.ENABLE_IP_PROXY:
@@ -139,10 +173,10 @@ class WeiboCrawler(AbstractCrawler):
         :return:
         """
         utils.logger.info("[WeiboCrawler.search] Begin search weibo keywords")
-        weibo_limit_count = 10  # weibo limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = weibo_limit_count
         start_page = config.START_PAGE
+        target_max = int(config.CRAWLER_MAX_NOTES_COUNT)
+        accepted = 0
+        max_pages_guard = 500
 
         # Set the search type based on the configuration for weibo
         if config.WEIBO_SEARCH_TYPE == "default":
@@ -158,27 +192,49 @@ class WeiboCrawler(AbstractCrawler):
             return
 
         for keyword in config.KEYWORDS.split(","):
+            if accepted >= target_max:
+                break
             source_keyword_var.set(keyword)
             utils.logger.info(f"[WeiboCrawler.search] Current search keyword: {keyword}")
             page = 1
-            while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while accepted < target_max and page <= max_pages_guard:
                 if page < start_page:
                     utils.logger.info(f"[WeiboCrawler.search] Skip page: {page}")
                     page += 1
                     continue
-                utils.logger.info(f"[WeiboCrawler.search] search weibo keyword: {keyword}, page: {page}")
+                utils.logger.info(
+                    f"[WeiboCrawler.search] search weibo keyword: {keyword}, page: {page}, "
+                    f"accepted={accepted}/{target_max}"
+                )
                 search_res = await self.wb_client.get_note_by_keyword(keyword=keyword, page=page, search_type=search_type)
                 note_id_list: List[str] = []
-                note_list = filter_search_result_card(search_res.get("cards"))
+                note_list = filter_search_result_card(search_res.get("cards") or [])
+                if not note_list:
+                    utils.logger.info("[WeiboCrawler.search] No cards on this page, end this keyword.")
+                    break
                 # If full text fetching is enabled, batch get full text of posts
                 note_list = await self.batch_get_notes_full_text(note_list)
                 for note_item in note_list:
+                    if accepted >= target_max:
+                        break
                     if note_item:
                         mblog: Dict = note_item.get("mblog")
                         if mblog:
+                            if not await self._weibo_note_allowed_in_negative_monitor_range(mblog):
+                                utils.logger.info(
+                                    f"[WeiboCrawler.search] Skip note outside NEGATIVE_MONITOR crawl date range (post+comments): {mblog.get('id')}"
+                                )
+                                continue
                             note_id_list.append(mblog.get("id"))
                             await weibo_store.update_weibo_note(note_item)
+                            accepted += 1
                             await self.get_note_images(mblog)
+
+                if note_list and not note_id_list:
+                    utils.logger.warning(
+                        "[WeiboCrawler.search] 本頁有結果但帖文+熱評均不在日期區間（或拉熱評失敗）。"
+                        "可放寬/清空 NEGATIVE_MONITOR_CRAWL_*，並確認已開啟評論抓取以按評論時間保留。"
+                    )
 
                 page += 1
 
@@ -187,7 +243,11 @@ class WeiboCrawler(AbstractCrawler):
                 utils.logger.info(f"[WeiboCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
 
                 await self.batch_get_notes_comments(note_id_list)
-
+                if accepted >= target_max:
+                    utils.logger.info(
+                        f"[WeiboCrawler.search] Reached target stored notes {accepted}/{target_max}, stop."
+                    )
+                    break
     async def get_specified_notes(self):
         """
         get specified notes info

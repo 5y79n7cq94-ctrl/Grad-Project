@@ -4,7 +4,7 @@
 
 - `Market Report`
   - 原有的官方帳號活動監察與 AI 摘要面板
-- `Heat Analysis`
+- `Full-Web Heat Analysis`
   - 基於 MediaCrawler 已跑好的 `wb + fb` 全網熱度分析面板
   - 支援 weekly Sunday-to-Saturday snapshot、`Update Database`、`Run Analysis`、Leaderboard 與 Trend Analysis
 
@@ -14,7 +14,7 @@
 
 - 已安裝並設定好 [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler)
 - 已在 MediaCrawler 完成 XHS 同微博掃碼登入
-- Heat Analysis 需要 MediaCrawler 內現成的熱度分析資料庫：
+- Full-Web Heat Analysis 需要 MediaCrawler 內現成的熱度分析資料庫：
   - 預設使用 `MediaCrawler/data/project/social_media_analytics.db`
 - 如要使用原本的 AI 摘要功能，仍然需要有餘額的 [DeepSeek API Key](https://platform.deepseek.com)
 
@@ -54,7 +54,7 @@ cp mediacrawler_patches/media_platform/weibo/core.py /path/to/MediaCrawler/media
 pip install -r requirements_extra.txt
 ```
 
-如果要完整支援 Heat Analysis，環境亦需要：
+如果要完整支援 Full-Web Heat Analysis，環境亦需要：
 
 - `jieba`
 - MediaCrawler 既有 `.venv` 中已安裝的分析依賴
@@ -65,7 +65,7 @@ pip install -r requirements_extra.txt
 
 如果你要使用原本的 AI 摘要分析，打開 [`bridge.py`](./bridge.py) 內的 API key 設定改成自己的 key。
 
-如果你只使用 `Heat Analysis`，即使沒有 `openai` 套件，頁面也可以正常啟動和使用。
+如果你只使用 `Full-Web Heat Analysis`，即使沒有 `openai` 套件，頁面也可以正常啟動和使用。
 
 ---
 
@@ -124,18 +124,18 @@ server 啟動後，直接用瀏覽器打開：
   - `http://127.0.0.1:9038/`
 - Market Report 別名：
   - `http://127.0.0.1:9038/project`
-- Heat Analysis：
-  - `http://127.0.0.1:9038/heat-analysis`
+- Full-Web Heat Analysis：
+  - `http://127.0.0.1:9038/full-web-heat-analysis`
 - Trend Analysis：
-  - `http://127.0.0.1:9038/heat-analysis/trends`
+  - `http://127.0.0.1:9038/full-web-heat-analysis/trends`
 
-你也可以先進主面板，再點新增的 `Heat Analysis` 按鈕。
+你也可以先進主面板，再點新增的 `Full-Web Heat Analysis` 按鈕。
 
 ---
 
-## Heat Analysis 資料來源
+## Full-Web Heat Analysis 資料來源
 
-Heat Analysis 現時直接讀取 MediaCrawler 已跑好的主分析庫：
+Full-Web Heat Analysis 現時直接讀取 MediaCrawler 已跑好的主分析庫：
 
 ```text
 MediaCrawler/data/project/social_media_analytics.db
@@ -174,15 +174,15 @@ python classifier_tester.py
 
 | 檔案 | 功能 |
 |------|------|
-| `bridge.py` | 主 FastAPI server，現在同時提供 `Market Report` 同 `Heat Analysis` |
+| `bridge.py` | 主 FastAPI server，現在同時提供 `Market Report` 同 `Full-Web Heat Analysis` |
 | `db_manager.py` | 所有 DB 操作：入庫、查詢、日期解析、backfill |
 | `task_manager.py` | 控制 MediaCrawler 爬蟲，管理爬取順序同入庫邏輯 |
 | `operation_panel.html` | 前端介面，選擇運營商/類別/日期範圍查看活動 |
-| `webui/heat_analysis.html` | Heat Analysis leaderboard 頁面 |
-| `webui/heat_trends.html` | Heat Analysis trend 頁面 |
-| `static/heat_analysis.js` | Heat Analysis 前端邏輯 |
+| `webui/heat_analysis.html` | Full-Web Heat Analysis leaderboard 頁面 |
+| `webui/heat_trends.html` | Full-Web Heat Analysis trend 頁面 |
+| `static/heat_analysis.js` | Full-Web Heat Analysis 前端邏輯 |
 | `static/heat_trends.js` | Trend Analysis 前端邏輯 |
-| `static/heat_analysis.css` | Heat Analysis / Trend Analysis 共用樣式 |
+| `static/heat_analysis.css` | Full-Web Heat Analysis / Trend Analysis 共用樣式 |
 | `heat_analysis_adapter.py` | 將 Grad-Project 橋接到 MediaCrawler 熱度分析 backend |
 | `heat_analysis_jobs.py` | `Update Database` 的 weekly background jobs |
 | `start_panel.sh` | 推薦啟動方式，會自動使用 MediaCrawler 的 `.venv` |
@@ -202,10 +202,10 @@ python classifier_tester.py
 **bridge.py 跑不了**
 → 最穩陣係直接用 `./start_panel.sh`
 
-**Heat Analysis 打不開**
+**Full-Web Heat Analysis 打不開**
 → 確認 `MEDIACRAWLER_ROOT` 指向正確的 MediaCrawler 根目錄
 
-**Heat Analysis 冇數據**
+**Full-Web Heat Analysis 冇數據**
 → 確認 `MediaCrawler/data/project/social_media_analytics.db` 已經有跑好的 `wb / fb` cluster 數據
 
 **分類全都是 experience**

@@ -97,7 +97,7 @@ function formatWeekLabel(weekStart, weekEnd) {
 }
 
 function syncLeaderboardLink() {
-  const base = new URL("/heat-analysis", window.location.origin);
+  const base = new URL("/full-web-heat-analysis", window.location.origin);
   if (state.selectedEvent) {
     base.searchParams.set("event", state.selectedEvent);
   }
@@ -254,7 +254,7 @@ async function loadTrendData() {
     week_start: state.currentWeek.week_start,
     week_end: state.currentWeek.week_end,
   });
-  const payload = await requestJson(`/api/heat-analysis/event-trend?${params.toString()}`);
+  const payload = await requestJson(`/api/full-web-heat-analysis/event-trend?${params.toString()}`);
   renderIndicatorCards(payload.summary || {});
   renderHeatFocusCard(payload.summary || {});
   renderCharts(payload.metrics || {});
@@ -262,7 +262,7 @@ async function loadTrendData() {
 
 async function resolveWeeklySnapshot() {
   const urlState = getUrlState();
-  const windows = await requestJson(`/api/heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&weeks=24`);
+  const windows = await requestJson(`/api/full-web-heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&weeks=24`);
   const requestedWeek = windows.items.find(
     (item) => item.week_start === urlState.weekStart && item.week_end === urlState.weekEnd
   );
@@ -284,8 +284,8 @@ async function loadPageData() {
   }
 
   const [overview, leaderboard] = await Promise.all([
-    requestJson(`/api/heat-analysis/overview?platform=${encodeURIComponent(state.platform)}&auto_sync=false`),
-    requestJson(`/api/heat-analysis/event-clusters?${query.toString()}`),
+    requestJson(`/api/full-web-heat-analysis/overview?platform=${encodeURIComponent(state.platform)}&auto_sync=false`),
+    requestJson(`/api/full-web-heat-analysis/event-clusters?${query.toString()}`),
   ]);
 
   elements.trendDbPathLabel.textContent = overview.db_path || "Unknown analytics database";

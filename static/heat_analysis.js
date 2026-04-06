@@ -71,7 +71,7 @@ const CALENDAR_MODE_CONFIG = {
     ],
   },
   update: {
-    eyebrow: "Weekly Heat Analysis",
+    eyebrow: "Weekly Full-Web Heat Analysis",
     title: "Update Database",
     helper:
       "Choose one fixed Sunday to Saturday window to crawl and ingest raw posts. Update Database only distinguishes Future, To Be Updated, and Updated weeks.",
@@ -223,7 +223,7 @@ function sortItems(items) {
 }
 
 function syncTrendLink() {
-  const base = new URL("/heat-analysis/trends", window.location.origin);
+  const base = new URL("/full-web-heat-analysis/trends", window.location.origin);
   if (state.selectedEvent) {
     base.searchParams.set("event", state.selectedEvent);
   }
@@ -560,7 +560,7 @@ function renderCalendar() {
 }
 
 async function loadWindows() {
-  const payload = await requestJson(`/api/heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&weeks=24`);
+  const payload = await requestJson(`/api/full-web-heat-analysis/analysis-windows?platform=${encodeURIComponent(state.platform)}&weeks=24`);
   state.windows = payload.items || [];
 
   if (state.selectedWeek) {
@@ -598,7 +598,7 @@ async function loadWindows() {
 }
 
 async function fetchLeaderboardData() {
-  const overview = await requestJson(`/api/heat-analysis/overview?platform=${encodeURIComponent(state.platform)}&auto_sync=false`);
+  const overview = await requestJson(`/api/full-web-heat-analysis/overview?platform=${encodeURIComponent(state.platform)}&auto_sync=false`);
   elements.heatDbPathLabel.textContent = overview.db_path || "Unknown analytics database";
 
   if (!state.selectedWeek) {
@@ -613,7 +613,7 @@ async function fetchLeaderboardData() {
     week_start: state.selectedWeek.week_start,
     week_end: state.selectedWeek.week_end,
   });
-  const endpoint = state.boardType === "topic" ? "/api/heat-analysis/topic-clusters" : "/api/heat-analysis/event-clusters";
+  const endpoint = state.boardType === "topic" ? "/api/full-web-heat-analysis/topic-clusters" : "/api/full-web-heat-analysis/event-clusters";
   const clusterPayload = await requestJson(`${endpoint}?${query.toString()}`);
   const items = sortItems(clusterPayload.items || []);
   renderOverview(items);
@@ -629,7 +629,7 @@ async function fetchLeaderboardData() {
 async function pollProjectJob(jobId) {
   state.pollingJobId = jobId;
   const tick = async () => {
-    const job = await requestJson(`/api/heat-analysis/jobs/${jobId}`);
+    const job = await requestJson(`/api/full-web-heat-analysis/jobs/${jobId}`);
     state.latestJob = job;
     if (job.status === "queued" || job.status === "running") {
       setStatus("Updating Database", `Background job is crawling and syncing ${PLATFORM_LABELS[state.platform]} for the selected week.`);
@@ -659,7 +659,7 @@ async function startUpdateForSelectedWeek() {
     week_start: week.week_start,
     week_end: week.week_end,
   });
-  const job = await postJson(`/api/heat-analysis/update-week?${query.toString()}`);
+  const job = await postJson(`/api/full-web-heat-analysis/update-week?${query.toString()}`);
   closeCalendar();
   await pollProjectJob(job.job_id);
 }
@@ -700,7 +700,7 @@ async function runAnalysisForSelectedWeek() {
     )}.`
   );
   try {
-    const result = await postJson(`/api/heat-analysis/run-analysis?${query.toString()}`);
+    const result = await postJson(`/api/full-web-heat-analysis/run-analysis?${query.toString()}`);
     await loadWindows();
     await fetchLeaderboardData();
     setStatus(

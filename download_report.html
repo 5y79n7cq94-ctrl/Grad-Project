@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Macau Integrated Resorts · Market Report</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background: #F5F5F5; color: #1E1E1E; }
+
+    /* ── Topbar ── */
+    .topbar { position:sticky; top:0; z-index:100; background:#2C3E50; color:white; padding:12px 28px; display:flex; justify-content:space-between; align-items:center; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.25); }
+    .topbar-left { display:flex; flex-direction:column; gap:2px; }
+    .topbar-title { font-size:17px; font-weight:700; }
+    .topbar-sub { font-size:12px; opacity:.75; }
+    .topbar-right { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .tb-btn { padding:7px 16px; border:1.5px solid rgba(255,255,255,.35); border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; background:transparent; color:white; transition:background .15s; font-family:inherit; }
+    .tb-btn:hover { background:rgba(255,255,255,.15); }
+    .tb-btn.primary { background:white; color:#2C3E50; border-color:white; }
+    .tb-btn.primary:hover { background:#e8edf2; }
+    #filterSummary { display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11.5px; }
+    .fs-pill { padding:3px 10px; border-radius:20px; font-weight:600; font-size:11px; background:#FFFFFF; color:#1E1E1E; }
+    .fs-label { font-size:11px; opacity:.65; white-space:nowrap; }
+    #filterSummary .filter-chip,
+    #filterSummary .filter-chip.cat {
+      background:#FFFFFF !important;
+    }
+
+    /* ── Pages ── */
+    #pdf-content { padding:42px 0 72px; max-width:860px; margin:0 auto; }
+    .pdf-page {
+      background:white;
+      width:100%;
+      max-width:820px;
+      min-height:1120px;
+      margin:0 auto 24px;
+      padding:72px 58px 68px;
+      border-radius:4px;
+      box-shadow:0 5px 20px rgba(0,0,0,.08);
+      page-break-inside:avoid;
+      break-inside:avoid-page;
+      overflow:hidden;
+    }
+    .page-section { }
+
+    /* ── Shared mini-header (pages 2-4) ── */
+    .page-mini-header { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #2C3E50; padding-bottom:10px; margin-bottom:20px; }
+    .pmt { font-size:13px; font-weight:700; color:#2C3E50; }
+    .pms { font-size:11px; color:#999; font-style:italic; }
+
+    /* ── Cover ── */
+    .cover-header { border-bottom:3px solid #2C3E50; padding-bottom:18px; margin-bottom:22px; }
+    .cover-title { font-size:28px; font-weight:800; color:#1E1E1E; line-height:1.25; }
+    .cover-meta { font-size:13px; color:#666; margin-top:8px; font-style:italic; }
+    .cover-gen { font-size:12px; color:#999; margin-top:4px; }
+    .summary-block { font-size:14px; color:#333; line-height:1.85; padding:14px 18px; background:#F7F8FA; border-left:4px solid #2C3E50; border-radius:0 6px 6px 0; margin-bottom:18px; }
+    .kpi-value { font-size:26px; font-weight:800; color:#1E1E1E; }
+    .kpi-label { font-size:13px; font-weight:600; color:#2C3E50; margin-top:4px; }
+    .kpi-sub { font-size:11px; color:#888; margin-top:3px; }
+    .filter-chip { padding:4px 12px; border-radius:20px; font-size:11.5px; font-weight:700; background:#FFFFFF; color:#2C3E50; border:1px solid transparent; }
+    .filter-chip.cat { background:#FFFFFF; color:#2C3E50; }
+
+    /* ── Events ── */
+    .cat-section { margin-bottom:22px; }
+    .cat-header { display:flex; align-items:center; gap:8px; margin-bottom:11px; padding:7px 12px; border-radius:8px; background:#F4F5F7; }
+    .cat-icon { font-size:17px; }
+    .cat-name { font-size:15px; font-weight:700; color:#1E1E1E; }
+    .cat-count { padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:700; color:white; margin-left:4px; }
+    .event-card { margin:0 0 10px 4px; padding:11px 15px; border-left:4px solid #CCC; border-radius:0 8px 8px 0; background:#FAFAFA; }
+    .event-name { font-size:14px; font-weight:700; color:#1E1E1E; margin-bottom:4px; }
+    .event-desc { font-size:12.5px; color:#666; font-style:italic; margin-bottom:7px; line-height:1.5; }
+    .event-badges { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .ev-badge { padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+    .ev-op { color:white; font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; }
+    .ev-heat { background:rgba(249,115,22,.12); color:#C2410C; }
+    .ev-date { background:rgba(15,23,42,.07); color:#374151; }
+    .ev-loc  { background:rgba(5,150,105,.10); color:#065F46; }
+    .ev-vis  { background:rgba(37,99,235,.10); color:#1D4ED8; }
+
+    /* ── Analytics ── */
+    .chart-block { background:#FAFAFA; border:1px solid #E8EAEE; border-radius:10px; padding:18px; margin-bottom:18px; }
+    .chart-title { font-size:13.5px; font-weight:700; color:#2C3E50; margin-bottom:3px; }
+    .chart-sub { font-size:11.5px; color:#999; margin-bottom:12px; }
+    .donut-wrap { display:flex; align-items:center; gap:20px; }
+    .donut-legend { display:flex; flex-direction:column; gap:7px; }
+    .legend-row { display:flex; align-items:center; gap:7px; font-size:12px; }
+    .legend-dot { width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+    .legend-val { font-weight:700; color:#1E1E1E; margin-left:auto; padding-left:10px; }
+    .analytics-section { margin-bottom:22px; page-break-inside:avoid; break-inside:avoid-page; }
+    .section-kicker { font-size:15px; font-weight:800; color:#1E1E1E; margin-bottom:4px; }
+    .section-note { font-size:11.5px; color:#8A8F98; margin-bottom:14px; }
+    .chart-grid-2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .chart-grid-3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    .mini-chart-card { background:#FAFAFA; border:1px solid #E8EAEE; border-radius:12px; padding:14px; page-break-inside:avoid; break-inside:avoid-page; }
+    .mini-chart-card.wynn-focus { background:linear-gradient(180deg, rgba(180,83,9,0.08), rgba(250,250,250,0.96)); border:2px solid rgba(180,83,9,0.34); box-shadow:0 10px 26px rgba(180,83,9,0.10); }
+    .mini-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+    .mini-card-title { font-size:13px; font-weight:800; color:#2C3E50; }
+    .mini-card-sub { font-size:10.5px; color:#8A8F98; }
+    .tiny-pill { padding:2px 8px; border-radius:999px; font-size:10px; font-weight:700; background:rgba(15,23,42,.06); color:#475569; }
+    .tiny-pill.wynn-focus { background:rgba(180,83,9,0.14); color:#B45309; border:1px solid rgba(180,83,9,0.22); }
+    .mini-donut-wrap { display:flex; flex-direction:column; align-items:center; gap:10px; }
+    .mini-legend { display:flex; flex-direction:column; gap:5px; width:100%; }
+    .metric-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:12px; }
+    .metric-card-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:800; color:#1E293B; }
+    .metric-rows { display:flex; flex-direction:column; gap:8px; }
+    .metric-row { display:grid; grid-template-columns:68px 1fr 34px; gap:8px; align-items:center; }
+    .metric-row.wynn-focus { background:rgba(180,83,9,0.08); border:1px solid rgba(180,83,9,0.16); border-radius:10px; padding:6px 8px; margin:0 -8px; }
+    .metric-label { font-size:11px; font-weight:700; color:#475569; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .metric-label.wynn-focus, .metric-value.wynn-focus { color:#B45309; }
+    .metric-bar-track { height:11px; border-radius:999px; background:#E5E7EB; overflow:hidden; }
+    .metric-bar-fill { height:100%; border-radius:999px; }
+    .metric-value { font-size:11px; font-weight:800; color:#1E293B; text-align:right; }
+    .stacked-wrap { display:flex; flex-direction:column; gap:10px; }
+    .stacked-row { display:grid; grid-template-columns:88px 1fr 56px; gap:10px; align-items:center; }
+    .stacked-row.wynn-focus { background:rgba(180,83,9,0.08); border:1px solid rgba(180,83,9,0.16); border-radius:10px; padding:7px 8px; }
+    .stacked-label { font-size:11px; font-weight:800; color:#334155; }
+    .stacked-label.wynn-focus, .stacked-total.wynn-focus { color:#B45309; }
+    .stacked-track { display:flex; width:100%; height:16px; background:#E5E7EB; border-radius:999px; overflow:hidden; }
+    .stacked-seg { height:100%; }
+    .stacked-total { font-size:11px; font-weight:700; color:#64748B; text-align:right; }
+    .stacked-legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; font-size:11px; color:#64748B; }
+    .stacked-legend span { display:flex; align-items:center; gap:5px; }
+    .legend-swatch { width:10px; height:10px; border-radius:2px; display:inline-block; }
+    .lb-item { display:flex; align-items:flex-start; gap:12px; padding:9px 0; border-bottom:1px solid #F0F0F0; }
+    .lb-item:last-child { border-bottom:none; }
+    .lb-rank { width:26px; height:26px; border-radius:50%; flex-shrink:0; display:grid; place-items:center; font-size:11px; font-weight:800; color:white; }
+    .lb-body { flex:1; min-width:0; }
+    .lb-name { font-size:13px; font-weight:700; color:#1E1E1E; margin-bottom:4px; }
+    .lb-meta { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .lb-chip { padding:2px 8px; border-radius:20px; font-size:10.5px; font-weight:600; background:rgba(15,23,42,.07); color:#374151; }
+    .strategy-shell { margin-top:2px; }
+    .strategy-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:16px; }
+    .strategy-title { font-size:20px; font-weight:800; color:#1E1E1E; }
+    .strategy-sub { font-size:13px; color:#7C8698; font-weight:600; line-height:1.45; margin-top:4px; max-width:560px; }
+    .strategy-ai-pill { padding:7px 12px; border-radius:999px; font-size:12px; font-weight:800; color:#4F46E5; background:rgba(79,70,229,0.10); border:1px solid rgba(79,70,229,0.16); white-space:nowrap; }
+    .strategy-list { display:flex; flex-direction:column; gap:12px; }
+    .strategy-card { padding:16px 18px; border-radius:18px; border:1px solid rgba(22,163,74,0.22); background:rgba(22,163,74,0.08); page-break-inside:avoid; break-inside:avoid-page; }
+    .cat-section, .event-card, .chart-block { page-break-inside:avoid; break-inside:avoid-page; }
+
+    body.pdf-exporting { background:white; }
+    body.pdf-exporting #pdf-content {
+      padding:24px 0 0;
+      max-width:860px;
+      margin:0 auto;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+    }
+    body.pdf-exporting .pdf-page {
+      width:100%;
+      max-width:820px;
+      margin:0 auto 16px;
+      border-radius:0;
+      box-shadow:none;
+    }
+    .compact-analytics .section-kicker { font-size:14px; }
+    .compact-analytics .section-note { font-size:10.5px; margin-bottom:10px; }
+    .compact-donut-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .compact-donut-grid .mini-chart-card { padding:10px; border-radius:10px; }
+    .compact-donut-grid .mini-card-head { margin-bottom:6px; }
+    .compact-donut-grid .mini-card-title { font-size:12px; }
+    .compact-donut-grid .mini-card-sub { font-size:9.5px; }
+    .compact-donut-grid .tiny-pill { font-size:9px; padding:2px 7px; }
+    .compact-donut-grid .mini-donut-wrap { gap:6px; }
+    .compact-donut-grid .mini-donut-wrap svg { width:132px; height:132px; }
+    .compact-donut-grid .mini-legend { gap:3px; }
+    .compact-donut-grid .legend-row { gap:5px; font-size:10px; }
+    .compact-donut-grid .legend-dot { width:8px; height:8px; }
+    .compact-donut-grid .legend-val { font-size:10px; }
+    .compact-metric-grid { gap:10px; }
+    .compact-metric-grid .mini-chart-card { padding:10px 11px; border-radius:10px; }
+    .compact-metric-grid .metric-card-head { margin-bottom:8px; }
+    .compact-metric-grid .metric-card-title { font-size:12px; gap:6px; }
+    .compact-metric-grid .tiny-pill { font-size:9px; padding:2px 7px; }
+    .compact-metric-grid .metric-rows { gap:5px; }
+    .compact-metric-grid .metric-row { grid-template-columns:62px 1fr 28px; gap:6px; }
+    .compact-metric-grid .metric-row.wynn-focus { padding:4px 6px; margin:0 -6px; }
+    .compact-metric-grid .metric-label,
+    .compact-metric-grid .metric-value { font-size:10px; }
+    .compact-metric-grid .metric-bar-track { height:9px; }
+    .strategy-shell.compact { margin-top:0; }
+    .strategy-shell.compact .strategy-head { margin-bottom:10px; }
+    .strategy-shell.compact .strategy-title { font-size:18px; }
+    .strategy-shell.compact .strategy-sub { font-size:11.5px; line-height:1.35; max-width:520px; }
+    .strategy-shell.compact .strategy-ai-pill { font-size:10.5px; padding:5px 10px; }
+    .strategy-shell.compact .strategy-list { gap:9px; }
+    .strategy-shell.compact .strategy-card { padding:12px 14px; border-radius:14px; }
+    .strategy-shell.compact .strategy-card-head { gap:10px; }
+    .strategy-shell.compact .strategy-icon { width:30px; height:30px; font-size:15px; border-radius:10px; }
+    .strategy-shell.compact .strategy-badges { margin-bottom:6px; gap:5px; }
+    .strategy-shell.compact .strategy-type,
+    .strategy-shell.compact .strategy-cat { font-size:9px; padding:2px 7px; }
+    .strategy-shell.compact .strategy-text { font-size:12px; line-height:1.5; }
+    .strategy-shell.compact .strategy-rank-wrap { margin-top:8px; padding-top:8px; }
+    .strategy-shell.compact .strategy-rank-title { font-size:9px; margin-bottom:5px; }
+    .strategy-shell.compact .strategy-rank-list { gap:3px; }
+    .strategy-shell.compact .strategy-rank-row { padding:4px 7px; gap:6px; }
+    .strategy-shell.compact .strategy-rank-badge { width:18px; height:18px; font-size:10px; }
+    .strategy-shell.compact .strategy-rank-name { font-size:11.5px; }
+    .strategy-shell.compact .strategy-rank-count,
+    .strategy-shell.compact .strategy-rank-heat { font-size:10.5px; }
+    .strategy-card.improve { border-color:rgba(245,158,11,0.22); background:rgba(245,158,11,0.08); }
+    .strategy-card.avoid { border-color:rgba(220,38,38,0.18); background:rgba(220,38,38,0.06); }
+    .strategy-card-head { display:flex; gap:12px; align-items:flex-start; }
+    .strategy-icon { flex:0 0 auto; width:36px; height:36px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:18px; border:1px solid transparent; }
+    .strategy-body { flex:1; min-width:0; }
+    .strategy-badges { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+    .strategy-type { font-size:10px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; border-radius:999px; padding:2px 8px; border:1px solid transparent; }
+    .strategy-cat { font-size:10px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid rgba(109,40,217,0.22); background:rgba(109,40,217,0.10); color:#6D28D9; display:inline-flex; align-items:center; gap:4px; }
+    .strategy-text { font-size:13.5px; line-height:1.7; color:rgba(15,23,42,0.82); }
+    .strategy-rank-wrap { margin-top:12px; padding-top:10px; border-top:1px solid rgba(15,23,42,0.07); }
+    .strategy-rank-title { font-size:10px; font-weight:700; color:rgba(15,23,42,0.35); letter-spacing:.5px; text-transform:uppercase; margin-bottom:6px; }
+    .strategy-rank-list { display:flex; flex-direction:column; gap:4px; }
+    .strategy-rank-row { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:10px; border:1px solid transparent; }
+    .strategy-rank-row.wynn-focus { background:rgba(234,179,8,0.08); border-color:rgba(234,179,8,0.22); }
+    .strategy-rank-badge { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:rgba(15,23,42,0.06); font-size:11px; font-weight:800; color:rgba(15,23,42,0.45); flex:0 0 auto; }
+    .strategy-rank-row.wynn-focus .strategy-rank-badge { background:rgba(234,179,8,0.15); color:#92400E; }
+    .strategy-rank-name { font-size:13px; font-weight:700; }
+    .strategy-rank-count { font-size:12px; font-weight:500; color:rgba(15,23,42,0.5); }
+    .strategy-rank-heat { display:inline-flex; align-items:center; gap:4px; padding:2px 9px; border-radius:999px; background:rgba(249,115,22,0.10); border:1px solid rgba(249,115,22,0.22); font-size:12px; font-weight:700; color:#C2410C; }
+
+    @media (max-width: 900px) {
+      .chart-grid-3, .chart-grid-2, .compact-donut-grid, .compact-metric-grid { grid-template-columns:1fr; }
+    }
+
+    @media print {
+      body { background:white; }
+      .topbar { display:none !important; }
+      .pdf-page { box-shadow:none; border-radius:0; margin:0 auto; width:100%; max-width:none; }
+      #pdf-content { padding:0; max-width:none; margin:0 auto; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-title">Macau Resort Analytics</div>
+    <div class="topbar-sub">Market Report</div>
+  </div>
+  <div class="topbar-right">
+    <div id="filterSummary">Loading…</div>
+    <button class="tb-btn" onclick="goBack()">← Back</button>
+    <button class="tb-btn primary" onclick="downloadPDF()">⬇ Download PDF</button>
+  </div>
+</div>
+
+<div id="pdf-content"></div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────────
+const OP_KEYS   = ['wynn','sands','galaxy','mgm','melco','sjm','government'];
+const OP_LABELS = { wynn:'Wynn', sands:'Sands', galaxy:'Galaxy', mgm:'MGM', melco:'Melco', sjm:'SJM', government:'Government' };
+const OP_COLORS = { wynn:'#B45309', sands:'#1D4ED8', galaxy:'#047857', mgm:'#991B1B', melco:'#6D28D9', sjm:'#0E7490', government:'#374151' };
+const CAT_ORDER = ['concert','exhibition','experience','sport','crossover','accommodation','food','shopping','gaming'];
+const CAT_CONFIG = {
+  concert:       { icon:'🎤', label:'Concert',     color:'#7C3AED' },
+  sport:         { icon:'🏆', label:'Sport',        color:'#DC2626' },
+  crossover:     { icon:'🎨', label:'Crossover',    color:'#D97706' },
+  exhibition:    { icon:'🖼️',  label:'Exhibition',  color:'#0891B2' },
+  experience:    { icon:'✨', label:'Experience',   color:'#059669' },
+  food:          { icon:'🍴', label:'Food',         color:'#EA580C' },
+  accommodation: { icon:'🏨', label:'Hotel',        color:'#2563EB' },
+  shopping:      { icon:'💰', label:'Shopping',     color:'#EC4899' },
+  gaming:        { icon:'🎰', label:'Gaming',       color:'#BE185D' },
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function isoDate(s) {
+  if (!s || s === 'N/A') return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const d = new Date(s.length <= 10 ? s + 'T00:00:00' : s);
+  if (isNaN(d)) return s;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Preserve full date range "2026-03-12~2026-03-22" → "2026-03-12 ~ 2026-03-22"
+function fmtDate(raw) {
+  if (!raw || raw === 'N/A') return '';
+  if (raw.includes('~')) {
+    const [a, b] = raw.split('~').map(s => s.trim());
+    const ia = isoDate(a), ib = isoDate(b);
+    return ia === ib ? ia : `${ia} ~ ${ib}`;
+  }
+  return isoDate(raw);
+}
+
+function fmtPeriod(start, end) {
+  const s = isoDate(start), e = isoDate(end);
+  if (!s && !e) return 'All Dates';
+  if (s && e && s !== e) return `${s} – ${e}`;
+  return s || e || 'All Dates';
+}
+
+function fmtGenerated(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+function buildReportFilename(data) {
+  const start = isoDate(data?.period?.start || '');
+  const end = isoDate(data?.period?.end || '');
+  if (start && end) {
+    const periodLabel = start === end ? start : `${start} to ${end}`;
+    return `Macau Integrated Resorts Market Report (${periodLabel}).pdf`;
+  }
+  return 'Macau Integrated Resorts Market Report.pdf';
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function hmColour(value) {
+  const v = Math.max(0, Math.min(100, Number(value)||0));
+  const ratio = v/100;
+  const stops = [[255,245,245],[254,205,211],[251,113,133],[225,29,72],[136,19,55]];
+  const pos = ratio*(stops.length-1), lo = Math.floor(pos), hi = Math.min(stops.length-1, lo+1), t = pos-lo;
+  const r = Math.round(stops[lo][0]+(stops[hi][0]-stops[lo][0])*t);
+  const g = Math.round(stops[lo][1]+(stops[hi][1]-stops[lo][1])*t);
+  const b = Math.round(stops[lo][2]+(stops[hi][2]-stops[lo][2])*t);
+  return { bg:`rgb(${r},${g},${b})`, text: ratio < 0.55 ? '#3B0A15' : '#fff' };
+}
+
+function goBack() {
+  if (window.opener && !window.opener.closed) { window.opener.focus(); window.close(); }
+  else window.close();
+}
+
+function resetPdfPages() {
+  const root = document.getElementById('pdf-content');
+  if (root) root.innerHTML = '';
+}
+
+function createPdfPage(id) {
+  const root = document.getElementById('pdf-content');
+  const page = document.createElement('div');
+  page.className = 'pdf-page';
+  if (root && root.children.length > 0) page.classList.add('break-before');
+  if (id) page.id = id;
+  root.appendChild(page);
+  return page;
+}
+
+function chunkArray(items, size) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+// ── Mini-header: repeats on pages 2-4 ────────────────────────────────────────
+function miniHeader(data, pageLabel) {
+  const period = fmtPeriod(data.period?.start, data.period?.end);
+  return `<div class="page-mini-header">
+    <div><div class="pmt">Macau Integrated Resorts · Market Report</div><div class="pms">${esc(pageLabel)}</div></div>
+    <div class="pms">${esc(period)}</div>
+  </div>`;
+}
+
+// ── Bold key numbers & names in summary ──────────────────────────────────────
+function boldSummary(para, kpis) {
+  if (!para) return '—';
+  let s = esc(para).replace(/\s*Top categories:[^.]+\./i, '');
+
+  // Bold numbers (longest first to avoid nested partial replacement)
+  const nums = [kpis.totalEvents, kpis.topOrganiserCount, kpis.topCategoryCount, kpis.activeOrganiserCount]
+    .filter(n => n != null).map(String).sort((a,b) => b.length-a.length);
+  for (const n of nums) s = s.replace(new RegExp(`\\b${n}\\b`,'g'), `<strong>${n}</strong>`);
+
+  // Bold names
+  const names = [kpis.topOrganiser, kpis.topCategory].filter(Boolean).sort((a,b) => b.length-a.length);
+  for (const name of names) {
+    const safe = esc(name).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    s = s.replace(new RegExp(`(?<![\\w>])${safe}(?![\\w<])`,'g'), `<strong>${esc(name)}</strong>`);
+  }
+
+  return s;
+}
+
+function buildTopCategoryPills(data) {
+  const categoryMix = data.chartData?.categoryMix || [];
+  const topCats = categoryMix.slice(0, 3);
+  if (!topCats.length) return '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px;">
+    <span style="font-size:12px;font-weight:700;color:#777;white-space:nowrap;">Top categories:</span>
+    ${topCats.map(cat => {
+      const cfg = CAT_CONFIG[cat.catKey] || { icon:'📍', label:cat.label || cat.catKey || 'Category', color:'#6B7280' };
+      return `<span style="padding:5px 13px;border-radius:20px;font-size:12px;font-weight:700;background:${cfg.color}14;color:${cfg.color};border:1px solid ${cfg.color}30;">${esc(cfg.icon)} ${esc(cfg.label)}</span>`;
+    }).join('')}
+  </div>`;
+}
+
+// ── Topbar ────────────────────────────────────────────────────────────────────
+function renderTopbar(data) {
+  const keywords = data.keywords || [];
+  const total = data.kpis?.totalEvents ?? 0;
+  const scope = buildScopeChips(data);
+  let html = scope.operatorChips + scope.categoryChips;
+  if (keywords.length) html += keywords.map(k => `<span class="fs-pill">${esc(k)}</span>`).join('');
+  html += `<span class="fs-pill">${total} event${total!==1?'s':''}</span>`;
+  document.getElementById('filterSummary').innerHTML = html;
+}
+
+function buildScopeChips(data) {
+  const filters = data.filters || {};
+  const opKeys = Array.isArray(filters.operators) ? filters.operators : [];
+  const catKeys = Array.isArray(filters.categories) ? filters.categories : [];
+  const opLabels = opKeys.map(op => {
+    const key = String(op).toLowerCase();
+    return {
+      label: OP_LABELS[key] || op,
+      color: OP_COLORS[key] || '#2C3E50'
+    };
+  });
+  const catLabels = catKeys.map(cat => {
+    const key = String(cat).toLowerCase();
+    return {
+      label: `${CAT_CONFIG[key]?.icon || '📍'} ${CAT_CONFIG[key]?.label || cat}`,
+      color: CAT_CONFIG[key]?.color || '#2C3E50'
+    };
+  });
+  const renderChip = (item, extraClass='') => `<span class="filter-chip ${extraClass}" style="background:${item.color}14;color:${item.color};border-color:${item.color}30;">${esc(item.label)}</span>`;
+  const operatorChips = opLabels.length
+    ? opLabels.map(item => renderChip(item)).join('')
+    : `<span class="filter-chip">All organisers</span>`;
+  const categoryChips = catLabels.length
+    ? catLabels.map(item => renderChip(item, 'cat')).join('')
+    : `<span class="filter-chip cat">All categories</span>`;
+  return { operatorChips, categoryChips };
+}
+
+// ── Page 1 — Cover ────────────────────────────────────────────────────────────
+function renderCover(data) {
+  const page = createPdfPage('page-cover');
+  const kpis = data.kpis || {};
+  const hotThemes = data.hotThemes || [];
+  const keywords = data.keywords || [];
+  const period = fmtPeriod(data.period?.start, data.period?.end);
+  const scope = buildScopeChips(data);
+
+  // Hot theme chips
+  const themeColors = ['#DC2626','#D97706','#7C3AED','#059669','#0891B2'];
+  const hotThemeHtml = hotThemes.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:22px;">
+        <span style="font-size:12px;font-weight:700;color:#777;margin-right:2px;">🔥 Hot Themes:</span>
+        ${hotThemes.map((t,i)=>`<span style="padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;background-color:${themeColors[i]||'#6B7280'}18;color:${themeColors[i]||'#6B7280'};border:1px solid ${themeColors[i]||'#6B7280'}30;">${esc(t.icon||'🔥')} ${esc(t.label)}</span>`).join('')}
+      </div>` : '';
+
+  // KPI table (table-based for PDF compat)
+  const kpiCell = (val, label, sub, color) =>
+    `<td style="width:50%;padding:8px;">
+      <div style="border:1px solid #E5E7EB;border-radius:10px;padding:15px 18px;border-top:4px solid ${color};background:#FAFAFA;">
+        <div class="kpi-value">${esc(String(val ?? '—'))}</div>
+        <div class="kpi-label">${label}</div>
+        <div class="kpi-sub">${sub}</div>
+      </div>
+    </td>`;
+
+  page.innerHTML = `
+    <div class="cover-header">
+      <div class="cover-title">Macau Integrated Resorts<br/>Market Report</div>
+      <div class="cover-meta">Reporting Period: ${esc(period)}</div>
+      <div class="cover-gen">Generated: ${fmtGenerated(data.generatedAt)}</div>
+    </div>
+
+    <div class="summary-block">
+      ${boldSummary(data.summary?.paragraph, kpis)}
+      ${buildTopCategoryPills(data)}
+    </div>
+
+    ${hotThemeHtml}
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:22px;">
+      <tr>
+        ${kpiCell(kpis.totalEvents, 'Total Events', 'Across all active categories', OP_COLORS[kpis.topOrganiserKey||'']||'#2C3E50')}
+        ${kpiCell(kpis.topOrganiser, 'Top Organiser', `${kpis.topOrganiserCount??0} event${kpis.topOrganiserCount!==1?'s':''} this period`, OP_COLORS[kpis.topOrganiserKey||'']||'#2C3E50')}
+      </tr>
+      <tr>
+        ${kpiCell(kpis.topCategory, 'Top Category', `${kpis.topCategoryCount??0} event${kpis.topCategoryCount!==1?'s':''} this period`, CAT_CONFIG[kpis.topCategoryKey||'']?.color||'#2C3E50')}
+        ${kpiCell(kpis.activeOrganiserCount, 'Active Organisers', 'With at least 1 event', '#2C3E50')}
+      </tr>
+    </table>
+
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start;">
+      <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:#777;">Selected Organisers:</span>
+        ${scope.operatorChips}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:#777;">Selected Categories:</span>
+        ${scope.categoryChips}
+      </div>
+      ${keywords.length ? `<div style="display:flex;flex-wrap:wrap;gap:7px;align-items:center;">
+        <span style="font-size:12px;font-weight:700;color:#777;">Keywords:</span>
+        ${keywords.map(k=>`<span class="filter-chip">${esc(k)}</span>`).join('')}
+      </div>` : ''}
+    </div>
+  `;
+}
+
+// ── Page 2 — Events by Category ──────────────────────────────────────────────
+function renderEvents(data) {
+  const events = data.events || {};
+  const pagesHtml = [];
+  const EVENT_PAGE_SIZE = 8;
+  for (const catKey of CAT_ORDER) {
+    const list = events[catKey];
+    if (!list || list.length === 0) continue;
+    const cfg = CAT_CONFIG[catKey] || { icon:'📌', label:catKey, color:'#6B7280' };
+    const chunks = chunkArray(list, EVENT_PAGE_SIZE);
+    chunks.forEach((chunk, chunkIdx) => {
+      let sectionHtml = miniHeader(data, '5. Posts');
+      sectionHtml += `<div style="font-size:12.5px;color:#888;margin-bottom:18px;margin-top:-10px;">Grouped by category · all activities in the selected period</div>`;
+      sectionHtml += `<div class="cat-section">
+        <div class="cat-header">
+          <span class="cat-icon">${cfg.icon}</span>
+          <span class="cat-name">${esc(cfg.label)}${chunks.length > 1 ? ` (${chunkIdx + 1}/${chunks.length})` : ''}</span>
+          <span class="cat-count" style="background:${cfg.color};">${list.length}</span>
+        </div>`;
+      for (const ev of chunk) {
+        const opColor = ev.organiserColor || OP_COLORS[ev.organiserKey] || '#6B7280';
+        const dateStr = fmtDate(ev.date);
+        sectionHtml += `<div class="event-card" style="border-left-color:${opColor};">
+          <div class="event-name">${esc(ev.name||'—')}</div>
+          ${ev.description ? `<div class="event-desc">${esc(ev.description)}</div>` : ''}
+          <div class="event-badges">
+            <span class="ev-op" style="background:${opColor};">${esc(ev.organiser||ev.organiserKey||'—')}</span>
+            ${ev.heat_score != null ? `<span class="ev-badge ev-heat">🔥 ${Number(ev.heat_score).toFixed(1)}</span>` : ''}
+            ${dateStr ? `<span class="ev-badge ev-date">📅 ${esc(dateStr)}</span>` : ''}
+            ${ev.location ? `<span class="ev-badge ev-loc">📍 ${esc(ev.location)}</span>` : ''}
+            ${ev.predictedVisitors ? `<span class="ev-badge ev-vis">👥 ${esc(ev.predictedVisitors)}</span>` : ''}
+          </div>
+        </div>`;
+      }
+      sectionHtml += `</div>`;
+      pagesHtml.push(sectionHtml);
+    });
+  }
+  if (!pagesHtml.length) {
+    const page = createPdfPage('page-events-empty');
+    page.innerHTML = miniHeader(data, '5. Posts') + `<div style="padding:30px;text-align:center;color:#999;font-size:14px;">No events found for the selected period.</div>`;
+    return;
+  }
+  pagesHtml.forEach((html, idx) => {
+    const page = createPdfPage(`page-events-${idx}`);
+    page.innerHTML = html;
+  });
+}
+
+// ── Page 3 — Analytics ────────────────────────────────────────────────────────
+function renderAnalytics(data) {
+  const donutPage = createPdfPage('page-analytics-donut');
+  donutPage.innerHTML = miniHeader(data, '2. Analytics') + `
+    <div class="analytics-section page-section compact-analytics">
+      <div class="section-kicker">Category Share</div>
+      <div class="section-note">All organisers · category share by organiser</div>
+      <div id="donut-grid" class="chart-grid-3 compact-donut-grid"></div>
+    </div>`;
+  renderDonutGrid(data.chartData?.categoryShareByOrganiser || [], 'donut-grid');
+
+  const distPage = createPdfPage('page-analytics-dist');
+  distPage.innerHTML = miniHeader(data, '2. Analytics') + `
+    <div class="analytics-section page-section compact-analytics">
+      <div class="section-kicker">Event Distribution by Category</div>
+      <div class="section-note">All categories · organiser event count comparison</div>
+      <div id="dist-grid" class="chart-grid-2 compact-metric-grid"></div>
+    </div>`;
+  renderMetricGrid(data.chartData?.eventDistributionByCategory || [], 'count', 'dist-grid');
+
+  const heatPage = createPdfPage('page-analytics-avgheat');
+  heatPage.innerHTML = miniHeader(data, '2. Analytics') + `
+    <div class="analytics-section page-section compact-analytics">
+      <div class="section-kicker">Avg Heat Score by Organiser</div>
+      <div class="section-note">All categories · organiser average heat comparison</div>
+      <div id="avgheat-grid" class="chart-grid-2 compact-metric-grid"></div>
+    </div>`;
+  renderMetricGrid(data.chartData?.avgHeatByCategory || [], 'heat', 'avgheat-grid');
+
+  const page4 = createPdfPage('page-analytics-tier-heatmap');
+  page4.innerHTML = miniHeader(data, '2. Analytics') + `
+    <div class="analytics-section chart-block page-section">
+      <div class="chart-title">Heat tier breakdown by organiser</div>
+      <div class="chart-sub">Single stacked comparison across all organisers</div>
+      <div id="tier-inner"></div>
+    </div>
+    <div class="chart-block page-section" style="margin-top:18px;">
+      <div class="chart-title">Events Distribution Heatmap</div>
+      <div class="chart-sub">All organisers × all categories — event count &amp; avg heat score</div>
+      <div id="hm-inner"></div>
+    </div>`;
+  renderTierBreakdown(data);
+  renderHeatmap(data);
+}
+
+// ── Doughnut SVG ──────────────────────────────────────────────────────────────
+function describeArc(cx, cy, r, sa, ea) {
+  const rad = a => (a-90)*Math.PI/180;
+  return `M ${cx+r*Math.cos(rad(sa))} ${cy+r*Math.sin(rad(sa))} A ${r} ${r} 0 ${(ea-sa)>180?1:0} 1 ${cx+r*Math.cos(rad(ea))} ${cy+r*Math.sin(rad(ea))}`;
+}
+function renderDonutGrid(rows, targetId) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div style="color:#999;font-size:13px;font-style:italic;">No organiser share data</div>';
+    return;
+  }
+  el.innerHTML = rows.map(buildOrganiserDonutCard).join('');
+}
+
+function buildOrganiserDonutCard(row) {
+  const total = row.total || 0;
+  const mix = (row.segments || []).filter(d => d.count > 0);
+  const isWynn = row.organiserKey === 'wynn';
+  const cx = 80, cy = 80, r = 54, sw = 24;
+  let paths = '';
+  let angle = 0;
+  if (total > 0) {
+    for (const d of mix) {
+      const end = angle + (d.count / total) * 360;
+      paths += `<path d="${describeArc(cx,cy,r,angle,Math.min(end,angle+359.99))}" fill="none" stroke="${d.color}" stroke-width="${sw}"/>`;
+      angle = end;
+    }
+  }
+  const legend = mix.length
+    ? mix.map(d => `<div class="legend-row"><span class="legend-dot" style="background:${d.color};"></span><span style="font-size:11px;color:#475569;">${esc(d.label)}</span><span class="legend-val">${d.count}</span></div>`).join('')
+    : '<div style="font-size:11px;color:#94A3B8;">No events</div>';
+  return `<div class="mini-chart-card ${isWynn ? 'wynn-focus' : ''}">
+    <div class="mini-card-head">
+      <div>
+        <div class="mini-card-title" style="${isWynn ? 'color:#B45309;' : ''}">${esc(row.label)}${isWynn ? ' ★' : ''}</div>
+        <div class="mini-card-sub">Category Share</div>
+      </div>
+      <span class="tiny-pill ${isWynn ? 'wynn-focus' : ''}">${total} events</span>
+    </div>
+    <div class="mini-donut-wrap">
+      <svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+        ${paths || `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#E5E7EB" stroke-width="${sw}" />`}
+        <text x="${cx}" y="${cy-5}" text-anchor="middle" font-size="22" font-weight="800" fill="${isWynn ? '#B45309' : '#1E1E1E'}">${total}</text>
+        <text x="${cx}" y="${cy+14}" text-anchor="middle" font-size="10" fill="#888">events</text>
+      </svg>
+      <div class="mini-legend">${legend}</div>
+    </div>
+  </div>`;
+}
+
+function renderMetricGrid(rows, mode, targetId) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div style="color:#999;font-size:13px;font-style:italic;">No chart data</div>';
+    return;
+  }
+  el.innerHTML = rows.map(row => {
+    const cfg = CAT_CONFIG[row.catKey] || { icon:'📌', label:row.label || row.catKey, color:'#6B7280' };
+    const items = [...(row.items || [])];
+    const hasWynn = items.some(item => item.organiserKey === 'wynn');
+    const max = mode === 'heat'
+      ? 100
+      : Math.max(1, ...items.map(item => Number(item.value) || 0));
+    const bars = items.map(item => {
+      const val = Number(item.value) || 0;
+      const width = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
+      const isWynn = item.organiserKey === 'wynn';
+      return `<div class="metric-row ${isWynn ? 'wynn-focus' : ''}">
+        <div class="metric-label ${isWynn ? 'wynn-focus' : ''}">${esc(item.label)}${isWynn ? ' ★' : ''}</div>
+        <div class="metric-bar-track"><div class="metric-bar-fill" style="width:${width}%;background:${item.color};opacity:${val > 0 ? 0.9 : 0.25};"></div></div>
+        <div class="metric-value ${isWynn ? 'wynn-focus' : ''}">${mode === 'heat' ? (val ? val.toFixed(1) : '0.0') : String(Math.round(val))}</div>
+      </div>`;
+    }).join('');
+    return `<div class="mini-chart-card" style="border-top:4px solid ${cfg.color};">
+      <div class="metric-card-head">
+        <div class="metric-card-title"><span>${cfg.icon || '📌'}</span><span>${esc(cfg.label)}</span></div>
+        <span class="tiny-pill">${mode === 'heat' ? 'Avg heat' : 'Event count'}</span>
+      </div>
+      <div class="metric-rows">${bars}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderTierBreakdown(data) {
+  const rows = data.chartData?.heatTierByOrganiser || [];
+  const el = document.getElementById('tier-inner');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div style="color:#999;font-size:13px;font-style:italic;">No heat tier data</div>';
+    return;
+  }
+  const html = rows.map(row => {
+    const isWynn = row.organiserKey === 'wynn';
+    const total = row.total || 0;
+    const highPct = total ? (row.high / total) * 100 : 0;
+    const midPct = total ? (row.mid / total) * 100 : 0;
+    const lowPct = total ? (row.low / total) * 100 : 0;
+    return `<div class="stacked-row ${isWynn ? 'wynn-focus' : ''}">
+      <div class="stacked-label ${isWynn ? 'wynn-focus' : ''}">${esc(row.label)}${isWynn ? ' ★' : ''}</div>
+      <div class="stacked-track">
+        <div class="stacked-seg" style="width:${highPct}%;background:#1E40AF;"></div>
+        <div class="stacked-seg" style="width:${midPct}%;background:#60A5FA;"></div>
+        <div class="stacked-seg" style="width:${lowPct}%;background:#CBD5E1;"></div>
+      </div>
+      <div class="stacked-total ${isWynn ? 'wynn-focus' : ''}">${total} events</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div class="stacked-wrap">${html}</div>
+    <div class="stacked-legend">
+      <span><i class="legend-swatch" style="background:#1E40AF;"></i>High (≥ 60)</span>
+      <span><i class="legend-swatch" style="background:#60A5FA;"></i>Mid (30–59)</span>
+      <span><i class="legend-swatch" style="background:#CBD5E1;"></i>Low (&lt; 30)</span>
+    </div>`;
+}
+
+// ── Heatmap — fully inline styles for PDF ─────────────────────────────────────
+function renderHeatmap(data) {
+  const hm = data.heatmapData||{};
+  const filters = data.filters || {};
+  const filterCats = Array.isArray(filters.categories) && filters.categories.length ? filters.categories : CAT_ORDER;
+  const filterOps = Array.isArray(filters.operators) && filters.operators.length ? filters.operators : OP_KEYS;
+  const activeCats = filterCats.filter(c => hm[c]);
+  const activeOps = filterOps.filter(opKey => OP_KEYS.includes(opKey));
+  if (!activeCats.length || !activeOps.length) { document.getElementById('hm-inner').innerHTML='<div style="color:#999;font-size:13px;font-style:italic;">No heatmap data</div>'; return; }
+
+  let t=`<table style="border-collapse:collapse;width:100%;font-size:11px;font-family:ui-sans-serif,sans-serif;">`;
+  t+=`<tr><th style="padding:5px 8px;text-align:left;font-size:10px;color:#555;font-weight:700;"></th>`;
+  for (const c of activeCats) { const cfg=CAT_CONFIG[c]||{icon:'',label:c}; t+=`<th style="padding:5px 6px;text-align:center;font-size:10px;color:#555;font-weight:700;">${cfg.icon} ${esc(cfg.label)}</th>`; }
+  t+=`</tr>`;
+  for (const opKey of activeOps) {
+    const isWynn = opKey === 'wynn';
+    t+=`<tr><td style="padding:6px 8px;text-align:left;font-size:11px;font-weight:700;color:${isWynn ? '#B45309' : '#374151'};white-space:nowrap;background:${isWynn ? 'rgba(180,83,9,0.08)' : 'transparent'};">${esc(OP_LABELS[opKey])}${isWynn ? ' ★' : ''}</td>`;
+    for (const cat of activeCats) {
+      const cell=hm[cat]?.[opKey];
+      if (!cell||cell.n===0) { t+=`<td style="padding:7px 8px;text-align:center;font-size:10.5px;font-weight:600;border:1px solid rgba(0,0,0,.06);background-color:#F3F4F6;color:#9CA3AF;">0</td>`; }
+      else { const col=hmColour(cell.h||0); t+=`<td style="padding:7px 8px;text-align:center;font-size:10.5px;font-weight:600;border:1px solid rgba(0,0,0,.06);background-color:${col.bg};color:${col.text};">${cell.n}<br><span style="font-size:9px;opacity:.85;">🔥${cell.h!=null?cell.h.toFixed(0):'—'}</span></td>`; }
+    }
+    t+=`</tr>`;
+  }
+  t+=`</table>`;
+  document.getElementById('hm-inner').innerHTML=`<div style="overflow-x:auto;">${t}</div>`;
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+function renderLeaderboard(data) {
+  const lb=data.leaderboard||[];
+  if (!lb.length) { document.getElementById('lb-inner').innerHTML=`<div style="color:#999;font-size:13px;font-style:italic;">Leaderboard data unavailable. Ensure bridge.py is running.</div>`; return; }
+  const rankBg=['#F59E0B','#9CA3AF','#B45309'];
+  const items=lb.slice(0,10).map(e=>{
+    const bg=rankBg[e.rank-1]||'#CBD5E1';
+    const opColor=OP_COLORS[(e.organiserKey||e.operator||'').toLowerCase()]||'#6B7280';
+    const catCfg=CAT_CONFIG[e.category]||{};
+    return `<div class="lb-item">
+      <div class="lb-rank" style="background:${bg};">${e.rank}</div>
+      <div class="lb-body">
+        <div class="lb-name">${esc(e.name)}</div>
+        <div class="lb-meta">
+          <span class="lb-chip" style="background-color:${opColor}18;color:${opColor};">${esc(e.organiser||e.operator||'—')}</span>
+          ${catCfg.label?`<span class="lb-chip">${catCfg.icon||''} ${esc(catCfg.label)}</span>`:''}
+          <span class="ev-badge ev-heat">🔥 ${Number(e.heat_score).toFixed(1)}</span>
+          ${e.newest_post?`<span class="ev-badge ev-date">📅 ${esc(isoDate(e.newest_post))}</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('lb-inner').innerHTML=items;
+}
+
+// ── Page 4 — AI Strategy ──────────────────────────────────────────────────────
+function renderStrategy(data) {
+  const ai = data.aiStrategy || {};
+  const recItems = ai.recommendationItems || [];
+  const comps = ai.comparisons || [];
+  const TYPE_CONFIG = {
+    keep_up: { icon:'🚀', label:'Keep it Up', color:'#15803D', bg:'rgba(22,163,74,0.08)', border:'rgba(22,163,74,0.22)' },
+    improve: { icon:'⚡', label:'Improve', color:'#B45309', bg:'rgba(245,158,11,0.08)', border:'rgba(245,158,11,0.22)' },
+    avoid: { icon:'🚫', label:'Avoid for Now', color:'#B91C1C', bg:'rgba(220,38,38,0.06)', border:'rgba(220,38,38,0.18)' }
+  };
+  if (!recItems.length) {
+    const page = createPdfPage('page-strategy-empty');
+    let html = miniHeader(data,'3. Strategic Recommendations for Wynn');
+    html += `<div class="strategy-shell">
+      <div class="strategy-head">
+        <div>
+          <div class="strategy-title">Strategic Recommendations for Wynn</div>
+          <div class="strategy-sub">Focused strategic recommendations grounded in Wynn's real brand strengths and live market heat data.</div>
+        </div>
+        <div class="strategy-ai-pill">✦ AI-GENERATED</div>
+      </div>`;
+    html += `<div style="font-size:13px;color:#999;font-style:italic;">AI recommendations not available. Run the strategy analysis in the panel first.</div></div>`;
+    page.innerHTML = html;
+    return;
+  }
+
+  let html = miniHeader(data,'3. Strategic Recommendations for Wynn');
+  html += `<div class="strategy-shell compact">
+      <div class="strategy-head">
+        <div>
+          <div class="strategy-title">Strategic Recommendations for Wynn</div>
+          <div class="strategy-sub">Focused strategic recommendations grounded in Wynn's real brand strengths and live market heat data.</div>
+        </div>
+        <div class="strategy-ai-pill">✦ AI-GENERATED</div>
+      </div>`;
+  html += `<div class="strategy-list">` + recItems.map(rec => {
+      const catKey = String(rec.catKey || '').toLowerCase();
+      const comp = comps.find(item => item.catKey === catKey);
+      // If Wynn has no events in this category, cannot be "keep_up" — force to "improve"
+      const wynnHasEvents = (comp?.wynn?.count || 0) > 0;
+      const type = (!wynnHasEvents && String(rec.type || '').toLowerCase() === 'keep_up') ? 'improve' : String(rec.type || 'improve').toLowerCase();
+      const cfg = TYPE_CONFIG[type] || TYPE_CONFIG.improve;
+      const catCfg = CAT_CONFIG[catKey] || { icon:'📌', label:catKey, color:'#6B7280' };
+      const rankingRows = buildStrategyRankingHtml(comp);
+      return `<div class="strategy-card ${type}" style="background:${cfg.bg};border-color:${cfg.border};">
+        <div class="strategy-card-head">
+          <div class="strategy-icon" style="background:${cfg.color}18;border-color:${cfg.color}30;">${cfg.icon}</div>
+          <div class="strategy-body">
+            <div class="strategy-badges">
+              <span class="strategy-type" style="color:${cfg.color};background:${cfg.color}14;border-color:${cfg.color}28;">${cfg.icon} ${cfg.label}</span>
+              <span class="strategy-cat">${catCfg.icon || '📌'} ${esc(catCfg.label || catKey)}</span>
+            </div>
+            <div class="strategy-text">${esc(rec.text || '')}</div>
+            ${rankingRows}
+          </div>
+        </div>
+      </div>`;
+    }).join('') + `</div></div>`;
+  const page = createPdfPage('page-strategy');
+  page.innerHTML = html;
+
+  const lbPage = createPdfPage('page-leaderboard');
+  lbPage.innerHTML = miniHeader(data,'4. Heat Leaderboard') + `
+    <div class="chart-block page-section">
+      <div class="chart-title">Heat Leaderboard — Top 10</div>
+      <div class="chart-sub">Top 10 activities across all organisers and categories</div>
+      <div id="lb-inner"></div>
+    </div>`;
+  renderLeaderboard(data);
+}
+
+function buildStrategyRankingHtml(comp) {
+  if (!comp) return '';
+  // Always include Wynn even when count=0 — show Wynn's position (or absence) in ranking
+  const wynnRow = { opTitle:'Wynn', count:comp.wynn?.count || 0, avg:comp.wynn?.avgHeat || 0 };
+  const opponents = [
+    ...(comp.topOpponent ? [{ opTitle:comp.topOpponent.organiser, count:comp.topOpponent.count || 0, avg:comp.topOpponent.avgHeat || 0 }] : []),
+    ...(Array.isArray(comp.opponents) ? comp.opponents.map(opp => ({ opTitle:opp.organiser, count:opp.count || 0, avg:opp.avgHeat || opp.avg || 0 })) : [])
+  ].filter(row => row.count > 0);
+
+  // Deduplicate competitors, then combine with Wynn
+  const seen = new Set(['Wynn']);
+  const uniqueOpponents = opponents.filter(row => { if (seen.has(row.opTitle)) return false; seen.add(row.opTitle); return true; });
+  const rows = [wynnRow, ...uniqueOpponents].sort((a, b) => (b.avg || 0) - (a.avg || 0));
+
+  const html = rows.map((row, i) => {
+    const isWynn = row.opTitle === 'Wynn';
+    const color = {
+      Wynn:'#B45309', Sands:'#1D4ED8', Galaxy:'#047857', MGM:'#991B1B', Melco:'#6D28D9', SJM:'#0E7490', Government:'#374151'
+    }[row.opTitle] || '#6B7280';
+    const heatLabel = row.count === 0
+      ? `<span class="strategy-rank-heat" style="color:#9CA3AF;font-style:italic;">no events</span>`
+      : `<span class="strategy-rank-heat">🔥 avg ${Number(row.avg || 0).toFixed(1)}</span>`;
+    return `<div class="strategy-rank-row ${isWynn ? 'wynn-focus' : ''}">
+      <span class="strategy-rank-badge">${i + 1}</span>
+      <span class="strategy-rank-name" style="color:${color};">${esc(row.opTitle)}</span>
+      <span class="strategy-rank-count">: ${row.count}</span>
+      ${heatLabel}
+    </div>`;
+  }).join('');
+  const label = CAT_CONFIG[comp.catKey]?.label || comp.label || comp.catKey || '';
+  return `<div class="strategy-rank-wrap">
+    <div class="strategy-rank-title">Heat Ranking · ${esc(String(label).toUpperCase())}</div>
+    <div class="strategy-rank-list">${html}</div>
+  </div>`;
+}
+
+// ── Download PDF ──────────────────────────────────────────────────────────────
+async function downloadPDF() {
+  const element = document.getElementById('pdf-content');
+  const pages = Array.from(element.querySelectorAll('.pdf-page'));
+  const raw = localStorage.getItem('macauReportData');
+  let reportData = null;
+  try { reportData = raw ? JSON.parse(raw) : null; } catch (e) { reportData = null; }
+  const filename = buildReportFilename(reportData);
+  if (!pages.length) return;
+  const html2canvasFn = window.html2canvas;
+  const jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
+  if (!html2canvasFn || !jsPDFCtor) {
+    window.alert('PDF libraries failed to load. Please refresh the preview report and try again.');
+    return;
+  }
+  document.body.classList.add('pdf-exporting');
+  try {
+    const pdf = new jsPDFCtor({ unit:'mm', format:'a4', orientation:'portrait' });
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 8;
+    const contentWidth = pageWidth - (margin * 2);
+    const contentHeight = pageHeight - (margin * 2);
+
+    for (let i = 0; i < pages.length; i += 1) {
+      const page = pages[i];
+      const canvas = await html2canvasFn(page, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        scrollX: 0,
+        scrollY: 0
+      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.98);
+      let imgWidth = contentWidth;
+      let imgHeight = (canvas.height * imgWidth) / canvas.width;
+      if (imgHeight > contentHeight) {
+        imgHeight = contentHeight;
+        imgWidth = (canvas.width * imgHeight) / canvas.height;
+      }
+      const x = margin + ((contentWidth - imgWidth) / 2);
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', x, margin, imgWidth, imgHeight, undefined, 'FAST');
+    }
+
+    pdf.save(filename);
+  } finally {
+    document.body.classList.remove('pdf-exporting');
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.onload = function() {
+  const raw = localStorage.getItem('macauReportData');
+  if (!raw) {
+    document.body.innerHTML=`<div style="padding:60px 40px;font-family:sans-serif;text-align:center;color:#555;">
+      <div style="font-size:40px;margin-bottom:16px;">📄</div>
+      <div style="font-size:20px;font-weight:700;color:#1E1E1E;margin-bottom:10px;">No report data found</div>
+      <div style="font-size:14px;color:#888;">Please open this page via the <strong>Preview Report</strong> button in the Analytics Panel.</div>
+      <button onclick="goBack()" style="margin-top:24px;padding:10px 22px;border-radius:8px;border:none;background:#2C3E50;color:white;font-size:14px;font-weight:600;cursor:pointer;">← Go Back</button>
+    </div>`; return;
+  }
+  let data;
+  try { data=JSON.parse(raw); }
+  catch(e) { document.body.innerHTML=`<div style="padding:40px;font-family:sans-serif;color:#B91C1C;">Error: ${e.message}</div>`; return; }
+  resetPdfPages();
+  renderTopbar(data);
+  renderCover(data);
+  renderAnalytics(data);
+  renderStrategy(data);
+  renderEvents(data);
+};
+</script>
+</body>
+</html>

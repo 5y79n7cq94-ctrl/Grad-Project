@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Macau Resort Analytics · Authentication</title>
+
+<style>
+:root{
+  --bg1:#F6F8FC;
+  --bg2:#EEF2F8;
+  --border:rgba(17,24,39,0.10);
+  --text:#0F172A;
+  --muted:rgba(15,23,42,0.60);
+  --brand:#2563EB;
+  --brand2:#16A34A;
+  --shadow:0 30px 60px rgba(15,23,42,0.08);
+  --radius:22px;
+  --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+  --error:#DC2626;
+  --success:#16A34A;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:var(--font);
+  background:
+    radial-gradient(900px 520px at 18% 10%, rgba(37,99,235,0.10), transparent 60%),
+    radial-gradient(700px 480px at 88% 18%, rgba(22,163,74,0.08), transparent 55%),
+    linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+  color:var(--text);
+  display:flex;
+  flex-direction:column;
+  min-height:100vh;
+}
+
+.nav{
+  max-width:1280px;
+  margin:28px auto 0;
+  padding:14px 20px;
+  width:100%;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,0.75);
+  border-radius:24px;
+  box-shadow:0 12px 30px rgba(15,23,42,0.06);
+  display:flex;
+  align-items:center;
+}
+
+.brand{display:flex; align-items:center; gap:12px;}
+.logo{
+  width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--brand),var(--brand2));
+  color:#fff;font-weight:900;letter-spacing:.5px;font-size:14px;
+}
+.brand-text{font-size:14px;font-weight:600;}
+
+.wrapper{flex:1; display:flex; justify-content:center; align-items:center; padding:40px 20px;}
+
+.card{
+  width:460px;
+  background:rgba(255,255,255,0.92);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:40px;
+}
+
+.card h2{margin:0 0 6px; font-size:20px; font-weight:700;}
+.card .subtitle{margin:0 0 26px; font-size:13px; color:var(--muted); line-height:1.5;}
+
+.field-grid{display:grid; grid-template-columns:1fr 1fr; gap:0 16px;}
+.field-full{grid-column:1/-1;}
+
+.field{margin-bottom:16px;}
+label{display:block; font-size:11.5px; font-weight:600; margin-bottom:5px; color:var(--muted); letter-spacing:.3px; text-transform:uppercase;}
+
+input, select{
+  width:100%; padding:11px 12px;
+  border-radius:12px;
+  border:1px solid rgba(15,23,42,0.13);
+  background:#F9FAFB;
+  font-size:13.5px;
+  font-family:var(--font);
+  color:var(--text);
+  transition:.15s ease;
+  appearance:none; -webkit-appearance:none;
+}
+select{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 12px center; padding-right:32px;
+}
+input:focus, select:focus{outline:none; border-color:var(--brand); background:#fff; box-shadow:0 0 0 3px rgba(37,99,235,0.11);}
+
+/* Password field with toggle */
+.pw-wrap{position:relative;}
+.pw-wrap input{padding-right:42px;}
+.pw-toggle{
+  position:absolute; right:12px; top:50%; transform:translateY(-50%);
+  background:none; border:none; cursor:pointer; padding:2px;
+  color:var(--muted); display:flex; align-items:center; justify-content:center;
+  transition:color .15s ease;
+}
+.pw-toggle:hover{color:var(--text);}
+.pw-toggle svg{width:17px; height:17px; pointer-events:none;}
+
+/* Strength bar */
+.strength-bar{display:flex; gap:4px; margin-top:7px;}
+.strength-bar span{
+  flex:1; height:3px; border-radius:3px;
+  background:rgba(15,23,42,0.10); transition:background .25s ease;
+}
+.strength-label{font-size:11px; margin-top:4px; font-weight:600;}
+
+/* Row (remember me / forgot) */
+.row{display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; font-size:12.5px; color:var(--muted);}
+.remember-me{display:flex; align-items:center; gap:7px; cursor:pointer; user-select:none;}
+.remember-me input[type="checkbox"]{width:15px;height:15px;margin:0;accent-color:var(--brand);cursor:pointer;}
+
+.link{color:var(--brand); text-decoration:none; font-weight:600; cursor:pointer; background:none; border:none; font-family:var(--font); font-size:inherit; padding:0;}
+.link:hover{text-decoration:underline;}
+
+/* Button */
+.btn{
+  width:100%; padding:13px; border:none; border-radius:13px;
+  font-weight:700; font-size:14px; cursor:pointer; font-family:var(--font);
+  background:linear-gradient(135deg,var(--brand),var(--brand2));
+  color:#fff; transition:.2s ease; letter-spacing:.2px;
+}
+.btn:hover{transform:translateY(-1px); box-shadow:0 10px 22px rgba(37,99,235,0.22);}
+.btn:active{transform:translateY(0);}
+.btn:disabled{opacity:0.55; cursor:not-allowed; transform:none; box-shadow:none;}
+
+/* Alert */
+.alert{
+  padding:10px 14px; border-radius:11px;
+  font-size:12.5px; font-weight:500; margin-bottom:18px; display:none; line-height:1.5;
+}
+.alert.show{display:block;}
+.alert.error{background:#FEF2F2; border:1px solid #FECACA; color:var(--error);}
+.alert.success{background:#F0FDF4; border:1px solid #BBF7D0; color:var(--success);}
+
+/* Divider */
+.divider{display:flex; align-items:center; gap:10px; margin:20px 0; color:var(--muted); font-size:12px;}
+.divider::before,.divider::after{content:''; flex:1; height:1px; background:var(--border);}
+
+.footer-note{margin-top:18px; font-size:11px; color:rgba(15,23,42,0.40); text-align:center; line-height:1.7;}
+
+.hidden{display:none !important;}
+
+/* Scrollable register */
+#register-view,#change-pw-view{max-height:92vh; overflow-y:auto; scrollbar-width:thin;}
+
+@media(max-width:600px){
+  .card{width:100%; padding:28px 18px;}
+  .field-grid{grid-template-columns:1fr;}
+  .field-full{grid-column:1;}
+}
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <div class="brand">
+    <div class="logo">MR</div>
+    <div class="brand-text">Macau Resort Analytics Platform</div>
+  </div>
+</div>
+
+<div class="wrapper">
+
+  <!-- ── LOGIN ── -->
+  <div id="login-view" class="card">
+    <h2>Sign in</h2>
+    <p class="subtitle">Access dashboards, reports, and suggestions</p>
+
+    <div id="login-alert" class="alert"></div>
+
+    <div class="field">
+      <label>Email Address</label>
+      <input id="login-email" type="email" placeholder="e.g., amychan@wynnpalace.com" autocomplete="email">
+    </div>
+
+    <div class="field">
+      <label>Password</label>
+      <div class="pw-wrap">
+        <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password">
+        <button class="pw-toggle" type="button" onclick="togglePw('login-password',this)" aria-label="Toggle password visibility">
+          <!-- Eye icon (visible) -->
+          <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          <!-- Eye-off icon (hidden) -->
+          <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="row" style="justify-content:flex-end;">
+      <button class="link" onclick="showView('forgot-view')">Forgot password?</button>
+    </div>
+
+    <button class="btn" id="login-btn" onclick="handleLogin()">Login</button>
+
+    <div class="divider">or</div>
+    <div style="text-align:center;font-size:13px;color:var(--muted);">
+      Don't have an account? <button class="link" onclick="showView('register-view')">Create one</button>
+    </div>
+
+    <div class="footer-note">Contact your system administrator for account access.</div>
+  </div>
+
+  <!-- ── REGISTER ── -->
+  <div id="register-view" class="card hidden">
+    <h2>Create account</h2>
+    <p class="subtitle">Fill in the details below to register for platform access.</p>
+
+    <div id="reg-alert" class="alert"></div>
+
+    <div class="field-grid">
+      <div class="field">
+        <label>First Name</label>
+        <input id="reg-firstname" type="text" placeholder="e.g., Amy" autocomplete="given-name">
+      </div>
+      <div class="field">
+        <label>Last Name</label>
+        <input id="reg-lastname" type="text" placeholder="e.g., Chan" autocomplete="family-name">
+      </div>
+      <div class="field field-full">
+        <label>Email Address</label>
+        <input id="reg-email" type="email" placeholder="e.g., amychan@wynnpalace.com" autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Department</label>
+        <select id="reg-department">
+          <option value="" disabled selected>Select department</option>
+          <option>Analytics</option>
+          <option>Finance</option>
+          <option>Operations</option>
+          <option>Marketing</option>
+          <option>IT &amp; Systems</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Position / Role</label>
+        <select id="reg-role">
+          <option value="" disabled selected>Select role</option>
+          <option>Analyst</option>
+          <option>Manager</option>
+          <option>Executive</option>
+          <option>Director</option>
+          <option>IT Admin</option>
+        </select>
+      </div>
+      <div class="field field-full">
+        <label>Password</label>
+        <div class="pw-wrap">
+          <input id="reg-password" type="password" placeholder="Min. 8 characters" oninput="checkStrength(this.value)" autocomplete="new-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('reg-password',this)" aria-label="Toggle password visibility">
+            <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+        <div class="strength-bar"><span id="s1"></span><span id="s2"></span><span id="s3"></span><span id="s4"></span></div>
+        <div id="strength-label" class="strength-label" style="color:var(--muted)"></div>
+      </div>
+      <div class="field field-full">
+        <label>Confirm Password</label>
+        <div class="pw-wrap">
+          <input id="reg-confirm" type="password" placeholder="Re-enter password" autocomplete="new-password">
+          <button class="pw-toggle" type="button" onclick="togglePw('reg-confirm',this)" aria-label="Toggle password visibility">
+            <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn" id="reg-btn" onclick="handleRegister()">Create Account</button>
+    <div style="text-align:center;margin-top:18px;font-size:13px;color:var(--muted);">
+      Already have an account? <button class="link" onclick="showView('login-view')">Sign in</button>
+    </div>
+    <div class="footer-note">Your User ID and date joined will be assigned automatically.</div>
+  </div>
+
+  <!-- ── FORGOT / RESET PASSWORD ── -->
+  <div id="forgot-view" class="card hidden">
+    <h2>Reset password</h2>
+    <p class="subtitle">Enter your registered email address to reset your password.</p>
+
+    <div id="forgot-alert" class="alert"></div>
+
+    <!-- Step 1: verify email -->
+    <div id="forgot-step1">
+      <div class="field">
+        <label>Email Address</label>
+        <input id="forgot-email" type="email" placeholder="e.g., amychan@wynnpalace.com">
+      </div>
+      <button class="btn" id="forgot-verify-btn" style="margin-bottom:4px;" onclick="handleVerifyEmail()">Continue</button>
+    </div>
+
+    <!-- Step 2: set new password (shown after email verified) -->
+    <div id="forgot-step2" class="hidden">
+      <div class="field">
+        <label>New Password</label>
+        <div class="pw-wrap">
+          <input id="forgot-new-pw" type="password" placeholder="Min. 8 characters" oninput="checkStrengthForgot(this.value)">
+          <button class="pw-toggle" type="button" onclick="togglePw('forgot-new-pw',this)" aria-label="Toggle password visibility">
+            <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+        <div class="strength-bar"><span id="fs1"></span><span id="fs2"></span><span id="fs3"></span><span id="fs4"></span></div>
+        <div id="forgot-strength-label" class="strength-label" style="color:var(--muted)"></div>
+      </div>
+      <div class="field">
+        <label>Confirm New Password</label>
+        <div class="pw-wrap">
+          <input id="forgot-confirm-pw" type="password" placeholder="Re-enter new password">
+          <button class="pw-toggle" type="button" onclick="togglePw('forgot-confirm-pw',this)" aria-label="Toggle password visibility">
+            <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn" id="forgot-reset-btn" style="margin-bottom:4px;" onclick="handleResetPassword()">Reset Password</button>
+    </div>
+
+    <div style="text-align:center;margin-top:20px;">
+      <button class="link" style="font-size:14px;" onclick="resetForgotView()">← Back to Login</button>
+    </div>
+    <div class="footer-note">Contact IT Support if you no longer have access to your email.</div>
+  </div>
+
+  <!-- ── CHANGE PASSWORD ── -->
+  <div id="change-pw-view" class="card hidden">
+    <h2>Change password</h2>
+    <p class="subtitle">Enter your current password and choose a new one.</p>
+
+    <div id="change-pw-alert" class="alert"></div>
+
+    <div class="field">
+      <label>Email Address</label>
+      <input id="cp-email" type="email" placeholder="Your registered email">
+    </div>
+    <div class="field">
+      <label>Current Password</label>
+      <div class="pw-wrap">
+        <input id="cp-old" type="password" placeholder="••••••••">
+        <button class="pw-toggle" type="button" onclick="togglePw('cp-old',this)" aria-label="Toggle password visibility">
+          <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="field">
+      <label>New Password</label>
+      <div class="pw-wrap">
+        <input id="cp-new" type="password" placeholder="Min. 8 characters" oninput="checkStrengthCp(this.value)">
+        <button class="pw-toggle" type="button" onclick="togglePw('cp-new',this)" aria-label="Toggle password visibility">
+          <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+      <div class="strength-bar"><span id="cs1"></span><span id="cs2"></span><span id="cs3"></span><span id="cs4"></span></div>
+      <div id="cp-strength-label" class="strength-label" style="color:var(--muted)"></div>
+    </div>
+    <div class="field">
+      <label>Confirm New Password</label>
+      <div class="pw-wrap">
+        <input id="cp-confirm" type="password" placeholder="Re-enter new password">
+        <button class="pw-toggle" type="button" onclick="togglePw('cp-confirm',this)" aria-label="Toggle password visibility">
+          <svg class="icon-eye" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+          <svg class="icon-eye-off" style="display:none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn" id="cp-btn" onclick="handleChangePassword()">Update Password</button>
+    <div style="text-align:center;margin-top:18px;">
+      <button class="link" style="font-size:14px;" onclick="showView('login-view')">← Back to Login</button>
+    </div>
+  </div>
+
+</div><!-- end wrapper -->
+
+<script>
+const API = 'http://127.0.0.1:9038';
+
+// ── Navigation ──────────────────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.card').forEach(c => c.classList.add('hidden'));
+  clearAlerts();
+  document.getElementById(id).classList.remove('hidden');
+}
+
+function clearAlerts() {
+  document.querySelectorAll('.alert').forEach(a => { a.className='alert'; a.textContent=''; });
+}
+
+function showAlert(id, msg, type) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'alert ' + type + ' show';
+}
+
+// ── Password toggle (SVG eye / eye-off) ─────────────────────────────────────
+function togglePw(inputId, btn) {
+  const inp  = document.getElementById(inputId);
+  const eye  = btn.querySelector('.icon-eye');
+  const eyeOff = btn.querySelector('.icon-eye-off');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    eye.style.display = 'none';
+    eyeOff.style.display = '';
+  } else {
+    inp.type = 'password';
+    eye.style.display = '';
+    eyeOff.style.display = 'none';
+  }
+}
+
+// ── Password strength ────────────────────────────────────────────────────────
+function calcStrength(pw) {
+  let s = 0;
+  if (pw.length >= 8)        s++;
+  if (/[A-Z]/.test(pw))      s++;
+  if (/[0-9]/.test(pw))      s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  return s;
+}
+function applyStrength(pw, barIds, labelId) {
+  const colors = ['#DC2626','#F97316','#EAB308','#16A34A'];
+  const labels = ['Weak','Fair','Good','Strong'];
+  const s = calcStrength(pw);
+  barIds.forEach((id,i) => {
+    document.getElementById(id).style.background = i < s ? colors[s-1] : 'rgba(15,23,42,0.10)';
+  });
+  const lbl = document.getElementById(labelId);
+  lbl.textContent = pw.length ? (labels[s-1] || '') : '';
+  lbl.style.color  = s > 0 ? colors[s-1] : 'var(--muted)';
+}
+function checkStrength(pw)   { applyStrength(pw, ['s1','s2','s3','s4'], 'strength-label'); }
+function checkStrengthCp(pw) { applyStrength(pw, ['cs1','cs2','cs3','cs4'], 'cp-strength-label'); }
+
+// ── LOGIN ────────────────────────────────────────────────────────────────────
+async function handleLogin() {
+  const email    = document.getElementById('login-email').value.trim().toLowerCase();
+  const password = document.getElementById('login-password').value;
+  if (!email || !password) {
+    showAlert('login-alert','Please enter your email and password.','error'); return;
+  }
+  const btn = document.getElementById('login-btn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const res  = await fetch(`${API}/login`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showAlert('login-alert', `Welcome back, ${data.first_name}! Redirecting…`, 'success');
+      // Hash password for admin token, then redirect with URL params (Safari file:// safe)
+      const crypto = window.crypto || window.msCrypto;
+      const encoder = new TextEncoder();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(password));
+      const hashArray  = Array.from(new Uint8Array(hashBuffer));
+      const token      = hashArray.map(b => b.toString(16).padStart(2,'0')).join('');
+      const params = new URLSearchParams({
+        user_id    : data.user_id,
+        first_name : data.first_name,
+        last_name  : data.last_name,
+        email      : email,
+        department : data.department,
+        position   : data.position,
+        role       : data.role || 'user',
+        token      : token,
+      });
+      setTimeout(() => {
+        if (data.position === 'IT Admin') {
+          window.location.href = 'admin_page.html?' + params.toString();
+        } else {
+          window.location.href = 'operation_panel.html?' + params.toString();
+        }
+      }, 1200);
+    } else {
+      showAlert('login-alert', data.message || 'Login failed.', 'error');
+    }
+  } catch {
+    showAlert('login-alert','Cannot reach server. Make sure server.py is running.','error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Login';
+  }
+}
+
+// ── REGISTER ─────────────────────────────────────────────────────────────────
+async function handleRegister() {
+  const first    = document.getElementById('reg-firstname').value.trim();
+  const last     = document.getElementById('reg-lastname').value.trim();
+  const email    = document.getElementById('reg-email').value.trim();
+  const dept     = document.getElementById('reg-department').value;
+  const position = document.getElementById('reg-role').value;
+  const password = document.getElementById('reg-password').value;
+  const confirm  = document.getElementById('reg-confirm').value;
+
+  if (!first||!last||!email||!dept||!position||!password||!confirm) {
+    showAlert('reg-alert','Please fill in all required fields.','error'); return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showAlert('reg-alert','Please enter a valid email address.','error'); return;
+  }
+  if (password.length < 8) {
+    showAlert('reg-alert','Password must be at least 8 characters.','error'); return;
+  }
+  if (password !== confirm) {
+    showAlert('reg-alert','Passwords do not match.','error'); return;
+  }
+
+  const btn = document.getElementById('reg-btn');
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  try {
+    const res  = await fetch(`${API}/register`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ first_name:first, last_name:last, email, department:dept, position, password })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showAlert('reg-alert', `Account created! Your User ID is ${data.user_id}. Redirecting to login…`, 'success');
+      setTimeout(() => showView('login-view'), 2500);
+    } else {
+      showAlert('reg-alert', data.message || 'Registration failed.', 'error');
+    }
+  } catch {
+    showAlert('reg-alert','Cannot reach server. Make sure server.py is running.','error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Account';
+  }
+}
+
+// ── RESET PASSWORD (2-step) ──────────────────────────────────────────────────
+function checkStrengthForgot(pw) { applyStrength(pw, ['fs1','fs2','fs3','fs4'], 'forgot-strength-label'); }
+
+function resetForgotView() {
+  document.getElementById('forgot-step1').classList.remove('hidden');
+  document.getElementById('forgot-step2').classList.add('hidden');
+  document.getElementById('forgot-email').value = '';
+  document.getElementById('forgot-new-pw').value = '';
+  document.getElementById('forgot-confirm-pw').value = '';
+  showView('login-view');
+}
+
+async function handleVerifyEmail() {
+  const email = document.getElementById('forgot-email').value.trim().toLowerCase();
+  if (!email) { showAlert('forgot-alert','Please enter your email address.','error'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showAlert('forgot-alert','Please enter a valid email address.','error'); return;
+  }
+  const btn = document.getElementById('forgot-verify-btn');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const res  = await fetch(`${API}/check-email`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+    if (data.exists) {
+      document.getElementById('forgot-alert').className = 'alert';
+      document.getElementById('forgot-step1').classList.add('hidden');
+      document.getElementById('forgot-step2').classList.remove('hidden');
+    } else {
+      showAlert('forgot-alert','No account found with that email address.','error');
+    }
+  } catch {
+    showAlert('forgot-alert','Cannot reach server. Make sure server.py is running.','error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Continue';
+  }
+}
+
+async function handleResetPassword() {
+  const email   = document.getElementById('forgot-email').value.trim().toLowerCase();
+  const newPw   = document.getElementById('forgot-new-pw').value;
+  const confirm = document.getElementById('forgot-confirm-pw').value;
+  if (!newPw || !confirm) { showAlert('forgot-alert','Please fill in both password fields.','error'); return; }
+  if (newPw.length < 8)   { showAlert('forgot-alert','Password must be at least 8 characters.','error'); return; }
+  if (newPw !== confirm)   { showAlert('forgot-alert','Passwords do not match.','error'); return; }
+  const btn = document.getElementById('forgot-reset-btn');
+  btn.disabled = true; btn.textContent = 'Resetting…';
+  try {
+    const res  = await fetch(`${API}/reset-password`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, new_password: newPw })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showAlert('forgot-alert','Password reset successfully! You can now sign in.','success');
+      setTimeout(() => resetForgotView(), 2500);
+    } else {
+      showAlert('forgot-alert', data.message || 'Reset failed.','error');
+    }
+  } catch {
+    showAlert('forgot-alert','Cannot reach server. Make sure server.py is running.','error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Reset Password';
+  }
+}
+
+// ── CHANGE PASSWORD ───────────────────────────────────────────────────────────
+async function handleChangePassword() {
+  const email       = document.getElementById('cp-email').value.trim().toLowerCase();
+  const old_password = document.getElementById('cp-old').value;
+  const new_password = document.getElementById('cp-new').value;
+  const confirm      = document.getElementById('cp-confirm').value;
+
+  if (!email||!old_password||!new_password||!confirm) {
+    showAlert('change-pw-alert','Please fill in all fields.','error'); return;
+  }
+  if (new_password.length < 8) {
+    showAlert('change-pw-alert','New password must be at least 8 characters.','error'); return;
+  }
+  if (new_password !== confirm) {
+    showAlert('change-pw-alert','New passwords do not match.','error'); return;
+  }
+
+  const btn = document.getElementById('cp-btn');
+  btn.disabled = true; btn.textContent = 'Updating…';
+  try {
+    const res  = await fetch(`${API}/change-password`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, old_password, new_password })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showAlert('change-pw-alert','Password updated successfully! You can now log in with your new password.','success');
+      setTimeout(() => showView('login-view'), 2500);
+    } else {
+      showAlert('change-pw-alert', data.message || 'Update failed.', 'error');
+    }
+  } catch {
+    showAlert('change-pw-alert','Cannot reach server. Make sure server.py is running.','error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Update Password';
+  }
+}
+</script>
+</body>
+</html>
