@@ -1,9 +1,16 @@
-import os, sys, json, uvicorn, re, hashlib, sqlite3, glob, time, math
+import os, sys, json, re, hashlib, sqlite3, glob, time, math
+try:
+    import uvicorn
+except ImportError:  # pragma: no cover - only needed for direct script launch
+    uvicorn = None
 import pandas as pd
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - optional for non-AI pages
+    OpenAI = None
 from collections import defaultdict
 from db_manager import query_db_by_filters, get_ops_needing_crawl, backfill_event_dates, DB_PATH, query_fb_negative_monitor, query_ig_negative_monitor, query_weibo_negative_monitor, query_xhs_negative_monitor
 from task_manager import run_task_master, run_fb_negative_monitor_crawl, run_ig_negative_monitor_crawl, run_weibo_negative_monitor_crawl, run_xhs_negative_monitor_crawl
@@ -12,7 +19,10 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from pathlib import Path
 from fastapi.responses import FileResponse, Response
-import joblib  
+try:
+    import joblib
+except ImportError:  # pragma: no cover - optional until footfall routes are used
+    joblib = None
 from full_web_heat_adapter import get_mediacrawler_root, get_project_analytics_service
 from full_web_heat_jobs import heat_job_manager
 
@@ -565,18 +575,38 @@ async def browser_icon_placeholders():
     return Response(status_code=204)
 
 
+class _MissingServiceClient:
+    def __init__(self, package_name: str, feature_name: str):
+        self.package_name = package_name
+        self.feature_name = feature_name
+
+    def __getattr__(self, _name):
+        raise RuntimeError(
+            f"{self.feature_name} requires the optional package '{self.package_name}'. "
+            f"Install it first or start the app with ./start_panel.sh."
+        )
+
+
 # DeepSeek client（用於帖文分析）
-client = OpenAI(
-    api_key="sk-ec64f5296ab34389a632b48aa8c28600",
-    base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+client = (
+    OpenAI(
+        api_key="sk-ec64f5296ab34389a632b48aa8c28600",
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    )
+    if OpenAI
+    else _MissingServiceClient("openai", "DeepSeek-backed analysis")
 )
 DEEPSEEK_JSON_MODEL = "deepseek-chat"
 DEEPSEEK_REASON_MODEL = "deepseek-reasoner"
 # Qwen client（用於 Wynn Market Performance & Positioning 推薦）
-QWEN_RECOMMENDATION_CLIENT = OpenAI(
-    api_key="sk-995dbed7e46548a6992a8e5153628165",
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-    timeout=240,
+QWEN_RECOMMENDATION_CLIENT = (
+    OpenAI(
+        api_key="sk-995dbed7e46548a6992a8e5153628165",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        timeout=240,
+    )
+    if OpenAI
+    else _MissingServiceClient("openai", "Qwen recommendation analysis")
 )
 QWEN_RECOMMENDATION_MODEL = "qwen3.5-plus"
 
@@ -3945,6 +3975,8 @@ def _find_free_listen_port(host: str, start: int, attempts: int = 32) -> tuple[i
 
 
 if __name__ == "__main__":
+    if uvicorn is None:
+        raise SystemExit("Missing optional dependency 'uvicorn'. Install requirements_extra.txt or use ./start_panel.sh.")
     _host = "127.0.0.1"
     _preferred = int(os.environ.get("BRIDGE_PORT", "9038"))
     _access_log = os.environ.get("BRIDGE_ACCESS_LOG", "1").strip().lower() not in ("0", "false", "no")
@@ -3959,8 +3991,3 @@ if __name__ == "__main__":
     if not _access_log:
         print("ℹ️  HTTP access log 已關閉（BRIDGE_ACCESS_LOG=0），終端唔再逐條打印 GET/POST")
     uvicorn.run(app, host=_host, port=_port, access_log=_access_log)
-
-# ══════════════════════════════════════════════════════════════════════════════
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=9038)
